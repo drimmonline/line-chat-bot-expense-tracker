@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 import cors from "cors"; // 1. นำเข้า cors
 import webhookRouter from "./routers/webhook.route";
 import { connectDB } from "./config/db.config";
-
+import expenseRouter from "./routers/expense.route";
 dotenv.config();
 
 const app = express();
@@ -17,6 +17,7 @@ app.use(cors());
 
 app.use(express.json());
 app.use("/webhook", webhookRouter);
+app.use("/expenses", expenseRouter);
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
