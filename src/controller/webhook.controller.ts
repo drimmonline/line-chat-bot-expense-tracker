@@ -4,9 +4,8 @@ import { lineConfig } from "../config/line.config";
 import { User } from "../models/user.model";
 import { Expense } from "../models/expense.model";
 import { ExpenseService } from "../services/expense.service";
-import axios from "axios"; // สำหรับโหลดไฟล์รูปภาพจาก LINE API
+import axios from "axios";
 
-// เปลี่ยนมาใช้ MessagingApiClient จาก messagingApi
 const client = new messagingApi.MessagingApiClient(lineConfig);
 const expenseService = new ExpenseService();
 
@@ -19,6 +18,53 @@ export const handleLineWebhook = async (
 
     await Promise.all(
       events.map(async (event) => {
+        // ==========================================
+        // 0.1. กรณีผู้ใช้กดเพิ่มเพื่อนครั้งแรก (Follow Event)
+        // ==========================================
+        if (event.type === "follow") {
+          const userId = event.source.userId;
+          if (userId) {
+            let dbUser = await User.findOne({ userId });
+            if (!dbUser) {
+              await User.create({
+                userId,
+                isPremium: false,
+                quotaUsed: 0,
+              });
+            }
+          }
+
+          return client.replyMessage({
+            replyToken: event.replyToken,
+            messages: [
+              {
+                type: "text",
+                text: "🤖 สวัสดีครับ! ขอบคุณที่เพิ่มเพื่อนกับ AI Expense Bot ผู้ช่วยบันทึกรายรับ-รายจ่ายอัจฉริยะ 📊\n\nคุณสามารถใช้งานได้ง่ายๆ ดังนี้:\n• พิมพ์บันทึกด่วน เช่น 'ข้าว 60' หรือ 'เงินเดือน 20000'\n• ถ่ายรูปบิลหรือสลิปเพื่อให้ AI ช่วยอ่านยอดเงินให้\n• พิมพ์ 'สรุป' เพื่อดูยอดเงินและรายการย้อนหลัง\n\nทดลองพิมพ์รายการใช้จ่ายของคุณมาได้เลยครับ!",
+                quickReply: {
+                  items: [
+                    {
+                      type: "action",
+                      action: {
+                        type: "message",
+                        label: "📊 ดูสรุปยอด",
+                        text: "สรุป",
+                      },
+                    },
+                    {
+                      type: "action",
+                      action: {
+                        type: "message",
+                        label: "❓ คุณทำอะไรได้บ้าง",
+                        text: "คุณทำอะไรได้",
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          });
+        }
+
         const userId = event.source.userId;
         if (!userId) return;
 
@@ -28,7 +74,6 @@ export const handleLineWebhook = async (
         if (event.type === "message" && event.message.type === "image") {
           const messageId = event.message.id;
 
-          // ตรวจสอบโควตาก่อนทำรายการรูปภาพ
           let dbUser = await User.findOne({ userId });
           if (!dbUser) {
             dbUser = await User.create({
@@ -52,7 +97,6 @@ export const handleLineWebhook = async (
           }
 
           try {
-            // ดึง Stream รูปภาพจาก LINE API โดยใช้ Channel Access Token
             const streamResponse = await axios.get(
               `https://api-data.line.me/v2/bot/message/${messageId}/content`,
               {
@@ -71,7 +115,6 @@ export const handleLineWebhook = async (
               "image/jpeg",
             );
 
-            // บันทึกลงฐานข้อมูล
             await Expense.create({
               userId,
               topic: "บันทึกจากรูปภาพ/บิล",
@@ -117,116 +160,62 @@ export const handleLineWebhook = async (
           const userText = event.message.text.trim();
 
           // ==========================================
-          // 0. ตรวจสอบคำทักทายหรือคำขอวิธีใช้งาน
+          // 0. ตรวจสอบคำถามวิธีใช้งาน หรือคำอธิบายความสามารถ
           // ==========================================
           if (
-            /^(สวัสดี|หวัดดี|hi|hello|วิธีใช้|ใช้งานยังไง|help)/i.test(userText)
+            /^(สวัสดี|หวัดดี|hi|hello|วิธีใช้|ใช้งานยังไง|help|คุณทำอะไรได้|สอนใช้หน่อย|ทำอะไรได้บ้าง)/i.test(
+              userText,
+            )
           ) {
             return client.replyMessage({
               replyToken: event.replyToken,
               messages: [
                 {
-                  type: "flex",
-                  altText: "คู่มือการใช้งาน AI Expense Bot",
-                  contents: {
-                    type: "bubble",
-                    hero: {
-                      type: "box",
-                      layout: "vertical",
-                      contents: [
-                        {
-                          type: "text",
-                          text: "🤖 AI Expense Bot",
-                          weight: "bold",
-                          size: "lg",
-                          color: "#ffffff",
-                          align: "center",
+                  type: "text",
+                  text: "🤖 สวัสดีครับ! ผมคือผู้ช่วย AI บันทึกรายรับ-รายจ่ายอัจฉริยะ\n\nสิ่งที่ผมช่วยคุณได้:\n• บันทึกรายรับ-รายจ่ายด่วน เช่น 'ข้าว 60' หรือ 'ขายของ 500'\n• ถ่ายรูปบิลหรือสลิปเพื่อให้ AI ช่วยอ่านยอดเงินและรายการให้ทันที\n• พิมพ์เล่าเรื่องราวการใช้เงินยาวๆ ให้ AI วิเคราะห์แยกหมวดหมู่ได้\n• พิมพ์ 'สรุป' เพื่อดูยอดเงินและรายการย้อนหลัง\n• พิมพ์ 'ลบ' เพื่อยกเลิกรายการล่าสุด\n\nคุณสามารถทดลองพิมพ์ข้อความบันทึกรายการ หรือกดปุ่มเมนูด่วนด้านล่างนี้ได้เลยครับ 👇",
+                  quickReply: {
+                    items: [
+                      {
+                        type: "action",
+                        action: {
+                          type: "message",
+                          label: "📊 ดูสรุปยอด",
+                          text: "สรุป",
                         },
-                      ],
-                      backgroundColor: "#06C755",
-                      paddingAll: "20px",
-                    },
-                    body: {
-                      type: "box",
-                      layout: "vertical",
-                      contents: [
-                        {
-                          type: "text",
-                          text: "ผู้ช่วยบันทึกรายรับ-รายจ่ายอัจฉริยะ",
-                          weight: "bold",
-                          size: "md",
-                          color: "#333333",
+                      },
+                      {
+                        type: "action",
+                        action: {
+                          type: "message",
+                          label: "🟢 ดูรายรับ",
+                          text: "รายรับ",
                         },
-                        {
-                          type: "separator",
-                          margin: "md",
+                      },
+                      {
+                        type: "action",
+                        action: {
+                          type: "message",
+                          label: "🔴 ดูรายจ่าย",
+                          text: "รายจ่าย",
                         },
-                        {
-                          type: "box",
-                          layout: "vertical",
-                          margin: "md",
-                          spacing: "sm",
-                          contents: [
-                            {
-                              type: "text",
-                              text: "📌 วิธีใช้งานง่ายๆ:",
-                              weight: "bold",
-                              size: "sm",
-                              color: "#555555",
-                            },
-                            {
-                              type: "text",
-                              text: "• พิมพ์บันทึกด่วน เช่น 'ข้าว 60'",
-                              size: "xs",
-                              color: "#666666",
-                            },
-                            {
-                              type: "text",
-                              text: "• บันทึกรายรับ เช่น 'ขายของ 500'",
-                              size: "xs",
-                              color: "#666666",
-                            },
-                            {
-                              type: "text",
-                              text: "• ถ่ายรูปบิลหรือสลิปเพื่อให้ AI อ่านอัตโนมัติ",
-                              size: "xs",
-                              color: "#666666",
-                            },
-                            {
-                              type: "text",
-                              text: "• พิมพ์ 'สรุป' เพื่อดูรายการย้อนหลัง",
-                              size: "xs",
-                              color: "#666666",
-                            },
-                            {
-                              type: "text",
-                              text: "• พิมพ์ 'ลบ' เพื่อลบรายการล่าสุด",
-                              size: "xs",
-                              color: "#666666",
-                            },
-                          ],
+                      },
+                      {
+                        type: "action",
+                        action: {
+                          type: "message",
+                          label: "🗑️ ลบรายการล่าสุด",
+                          text: "ลบ",
                         },
-                      ],
-                      paddingAll: "20px",
-                    },
-                    footer: {
-                      type: "box",
-                      layout: "vertical",
-                      spacing: "sm",
-                      contents: [
-                        {
-                          type: "button",
-                          style: "primary",
-                          color: "#06C755",
-                          action: {
-                            type: "uri",
-                            label: "📊 เปิดหน้าเว็บ Dashboard",
-                            uri: "https://line-expense-tracker-liff.vercel.app",
-                          },
+                      },
+                      {
+                        type: "action",
+                        action: {
+                          type: "message",
+                          label: "❓ คุณทำอะไรได้บ้าง",
+                          text: "คุณทำอะไรได้",
                         },
-                      ],
-                      paddingAll: "20px",
-                    },
+                      },
+                    ],
                   },
                 },
               ],
@@ -234,7 +223,7 @@ export const handleLineWebhook = async (
           }
 
           // ==========================================
-          // A. คำสั่งลบรายการล่าสุด (เช่น พิมพ์ "ลบ" หรือ "ลบรายการ")
+          // A. คำสั่งลบรายการล่าสุด
           // ==========================================
           if (/^(ลบ|ลบรายการ|ลบรายการล่าสุด)/i.test(userText)) {
             const deleted = await expenseService.deleteLatestExpense(userId);
@@ -271,7 +260,7 @@ export const handleLineWebhook = async (
           }
 
           // ==========================================
-          // B. คำสั่งดูเฉพาะรายรับ (เช่น พิมพ์ "ดูรายรับ" หรือ "รายรับ")
+          // B. คำสั่งดูเฉพาะรายรับ
           // ==========================================
           if (/^ดูรายรับ|รายรับ$/i.test(userText)) {
             const incomes = await expenseService.getFilteredExpenses(
@@ -304,7 +293,7 @@ export const handleLineWebhook = async (
           }
 
           // ==========================================
-          // C. คำสั่งดูเฉพาะรายจ่าย (เช่น พิมพ์ "ดูรายจ่าย" หรือ "รายจ่าย")
+          // C. คำสั่งดูเฉพาะรายจ่าย
           // ==========================================
           if (/^ดูรายจ่าย|รายจ่าย$/i.test(userText)) {
             const expenses = await expenseService.getFilteredExpenses(
@@ -337,7 +326,7 @@ export const handleLineWebhook = async (
           }
 
           // ==========================================
-          // 1. ตรวจสอบคำสั่งขอดูรายการสรุป (เช่น "สรุป", "รายการ", "ดูรายการ")
+          // 1. ตรวจสอบคำสั่งขอดูรายการสรุป
           // ==========================================
           if (/^(สรุป|รายการ|ดูรายการ|ประวัติ)/i.test(userText)) {
             const recentExpenses = await expenseService.getRecentExpenses(
@@ -418,7 +407,7 @@ export const handleLineWebhook = async (
           }
 
           // ==========================================
-          // 2. ตรวจสอบคำสั่งค้นหารายการเฉพาะเจาะจง (เช่น "หา กระเพรา")
+          // 2. ตรวจสอบคำสั่งค้นหารายการเฉพาะเจาะจง
           // ==========================================
           const searchMatch = userText.match(/^(หา|ค้นหา)\s+(.+)$/i);
           if (searchMatch) {
@@ -468,7 +457,23 @@ export const handleLineWebhook = async (
           }
 
           // ==========================================
-          // 3. กระบวนการปกติ: ตรวจสอบโควตาและบันทึกข้อมูลจากข้อความ
+          // 3. ตรวจสอบว่ามีตัวเลขในข้อความหรือไม่ (ถ้าไม่มีหรือคุยเล่นนอกเรื่อง ให้ปฏิเสธ)
+          // ==========================================
+          const hasNumber = /\d+/.test(userText);
+          if (!hasNumber) {
+            return client.replyMessage({
+              replyToken: event.replyToken,
+              messages: [
+                {
+                  type: "text",
+                  text: "ขออภัยผมไม่สามารถช่วยเหลือเรื่องนั้นได้",
+                },
+              ],
+            });
+          }
+
+          // ==========================================
+          // 4. กระบวนการปกติ: ตรวจสอบโควตาและบันทึกข้อมูลจากข้อความ
           // ==========================================
           let dbUser = await User.findOne({ userId });
           if (!dbUser) {
@@ -495,6 +500,19 @@ export const handleLineWebhook = async (
           let expenseData = expenseService.parseQuickText(userText);
           if (!expenseData) {
             expenseData = await expenseService.parseWithAI(userText);
+          }
+
+          // ป้องกันกรณี AI ตีความข้อความไม่มีตัวเลขหลุดรอดมาได้
+          if (!expenseData || !expenseData.amount || expenseData.amount === 0) {
+            return client.replyMessage({
+              replyToken: event.replyToken,
+              messages: [
+                {
+                  type: "text",
+                  text: "ขออภัยผมไม่สามารถช่วยเหลือเรื่องนั้นได้",
+                },
+              ],
+            });
           }
 
           await Expense.create({
