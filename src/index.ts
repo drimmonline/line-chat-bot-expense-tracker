@@ -14,7 +14,12 @@ connectDB();
 
 // 2. เปิดใช้งาน CORS (ให้หน้าเว็บ Vercel ยิง API เข้ามาหาได้)
 app.use(cors());
-
+app.get("/", (req, res) => {
+  res.status(200).json({
+    status: "success",
+    message: "เชื่อมต่อ Backend สำเร็จแล้ว!",
+  });
+});
 app.use(express.json());
 app.use("/webhook", webhookRouter);
 app.use("/expenses", expenseRouter);
