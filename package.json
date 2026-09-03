@@ -14,11 +14,13 @@
   "dependencies": {
     "@google/genai": "^2.20.0",
     "@line/bot-sdk": "^11.2.0",
+    "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "mongoose": "^9.9.4"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/mongoose": "^5.11.96",
     "@types/node": "^26.4.1",

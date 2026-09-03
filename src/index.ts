@@ -1,5 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
+import cors from "cors"; // 1. นำเข้า cors
 import webhookRouter from "./routers/webhook.route";
 import { connectDB } from "./config/db.config";
 
@@ -10,6 +11,9 @@ const PORT = process.env.PORT || 3000;
 
 // เชื่อมต่อ MongoDB
 connectDB();
+
+// 2. เปิดใช้งาน CORS (ให้หน้าเว็บ Vercel ยิง API เข้ามาหาได้)
+app.use(cors());
 
 app.use(express.json());
 app.use("/webhook", webhookRouter);
