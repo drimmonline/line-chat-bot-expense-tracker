@@ -4,6 +4,7 @@ import { lineConfig } from "../config/line.config";
 import { User } from "../models/user.model";
 import { Expense } from "../models/expense.model";
 import { ExpenseService } from "../services/expense.service";
+import axios from "axios"; // สำหรับโหลดไฟล์รูปภาพจาก LINE API
 
 // เปลี่ยนมาใช้ MessagingApiClient จาก messagingApi
 const client = new messagingApi.MessagingApiClient(lineConfig);
@@ -18,11 +19,219 @@ export const handleLineWebhook = async (
 
     await Promise.all(
       events.map(async (event) => {
-        if (event.type === "message" && event.message.type === "text") {
-          const userId = event.source.userId;
-          const userText = event.message.text.trim(); // ใช้ trim ตัดช่องว่างหัวท้าย
+        const userId = event.source.userId;
+        if (!userId) return;
 
-          if (!userId) return;
+        // ==========================================
+        // 1. กรณีผู้ใช้ส่งรูปภาพมา (ถ่ายบิล / สลิป)
+        // ==========================================
+        if (event.type === "message" && event.message.type === "image") {
+          const messageId = event.message.id;
+
+          // ตรวจสอบโควตาก่อนทำรายการรูปภาพ
+          let dbUser = await User.findOne({ userId });
+          if (!dbUser) {
+            dbUser = await User.create({
+              userId,
+              isPremium: false,
+              quotaUsed: 0,
+            });
+          }
+
+          const FREE_LIMIT = 30;
+          if (!dbUser.isPremium && dbUser.quotaUsed >= FREE_LIMIT) {
+            return client.replyMessage({
+              replyToken: event.replyToken,
+              messages: [
+                {
+                  type: "text",
+                  text: "⚠️ คุณใช้โควตาฟรีครบกำหนดแล้ว กรุณาอัปเกรดเป็นแพ็กเกจพรีเมียมเพื่อใช้งานต่อครับ",
+                },
+              ],
+            });
+          }
+
+          try {
+            // ดึง Stream รูปภาพจาก LINE API โดยใช้ Channel Access Token
+            const streamResponse = await axios.get(
+              `https://api-data.line.me/v2/bot/message/${messageId}/content`,
+              {
+                headers: {
+                  Authorization: `Bearer ${lineConfig.channelAccessToken}`,
+                },
+                responseType: "arraybuffer",
+              },
+            );
+
+            const imageBase64 = Buffer.from(streamResponse.data).toString(
+              "base64",
+            );
+            const expenseData = await expenseService.parseImageWithAI(
+              imageBase64,
+              "image/jpeg",
+            );
+
+            // บันทึกลงฐานข้อมูล
+            await Expense.create({
+              userId,
+              topic: "บันทึกจากรูปภาพ/บิล",
+              description: expenseData.description,
+              amount: expenseData.amount,
+              category: expenseData.category,
+              type: expenseData.type,
+            });
+
+            dbUser.quotaUsed += 1;
+            await dbUser.save();
+
+            const typeText =
+              expenseData.type === "income" ? "🟢 รายรับ" : "🔴 รายจ่าย";
+
+            return client.replyMessage({
+              replyToken: event.replyToken,
+              messages: [
+                {
+                  type: "text",
+                  text: `📸 อ่านบิล/สลิปสำเร็จ!\n\n📌 ประเภท: ${typeText}\n📝 รายการ: ${expenseData.description}\n💰 จำนวน: ${expenseData.amount} บาท\n📂 หมวดหมู่: ${expenseData.category}\n\n(ใช้งานไปแล้ว ${dbUser.quotaUsed}/${dbUser.isPremium ? "∞" : FREE_LIMIT} รายการ)`,
+                },
+              ],
+            });
+          } catch (imgErr) {
+            console.error("Image processing error:", imgErr);
+            return client.replyMessage({
+              replyToken: event.replyToken,
+              messages: [
+                {
+                  type: "text",
+                  text: "❌ ไม่สามารถอ่านรูปภาพนี้ได้ ลองใหม่อีกครั้งหรือพิมพ์ข้อความแทนนะครับ",
+                },
+              ],
+            });
+          }
+        }
+
+        // ==========================================
+        // 2. กรณีผู้ใช้ส่งข้อความตัวอักษรมาปกติ
+        // ==========================================
+        if (event.type === "message" && event.message.type === "text") {
+          const userText = event.message.text.trim();
+
+          // ==========================================
+          // 0. ตรวจสอบคำทักทายหรือคำขอวิธีใช้งาน
+          // ==========================================
+          if (
+            /^(สวัสดี|หวัดดี|hi|hello|วิธีใช้|ใช้งานยังไง|help)/i.test(userText)
+          ) {
+            return client.replyMessage({
+              replyToken: event.replyToken,
+              messages: [
+                {
+                  type: "flex",
+                  altText: "คู่มือการใช้งาน AI Expense Bot",
+                  contents: {
+                    type: "bubble",
+                    hero: {
+                      type: "box",
+                      layout: "vertical",
+                      contents: [
+                        {
+                          type: "text",
+                          text: "🤖 AI Expense Bot",
+                          weight: "bold",
+                          size: "lg",
+                          color: "#ffffff",
+                          align: "center",
+                        },
+                      ],
+                      backgroundColor: "#06C755",
+                      paddingAll: "20px",
+                    },
+                    body: {
+                      type: "box",
+                      layout: "vertical",
+                      contents: [
+                        {
+                          type: "text",
+                          text: "ผู้ช่วยบันทึกรายรับ-รายจ่ายอัจฉริยะ",
+                          weight: "bold",
+                          size: "md",
+                          color: "#333333",
+                        },
+                        {
+                          type: "separator",
+                          margin: "md",
+                        },
+                        {
+                          type: "box",
+                          layout: "vertical",
+                          margin: "md",
+                          spacing: "sm",
+                          contents: [
+                            {
+                              type: "text",
+                              text: "📌 วิธีใช้งานง่ายๆ:",
+                              weight: "bold",
+                              size: "sm",
+                              color: "#555555",
+                            },
+                            {
+                              type: "text",
+                              text: "• พิมพ์บันทึกด่วน เช่น 'ข้าว 60'",
+                              size: "xs",
+                              color: "#666666",
+                            },
+                            {
+                              type: "text",
+                              text: "• บันทึกรายรับ เช่น 'ขายของ 500'",
+                              size: "xs",
+                              color: "#666666",
+                            },
+                            {
+                              type: "text",
+                              text: "• ถ่ายรูปบิลหรือสลิปเพื่อให้ AI อ่านอัตโนมัติ",
+                              size: "xs",
+                              color: "#666666",
+                            },
+                            {
+                              type: "text",
+                              text: "• พิมพ์ 'สรุป' เพื่อดูรายการย้อนหลัง",
+                              size: "xs",
+                              color: "#666666",
+                            },
+                            {
+                              type: "text",
+                              text: "• พิมพ์ 'ลบ' เพื่อลบรายการล่าสุด",
+                              size: "xs",
+                              color: "#666666",
+                            },
+                          ],
+                        },
+                      ],
+                      paddingAll: "20px",
+                    },
+                    footer: {
+                      type: "box",
+                      layout: "vertical",
+                      spacing: "sm",
+                      contents: [
+                        {
+                          type: "button",
+                          style: "primary",
+                          color: "#06C755",
+                          action: {
+                            type: "uri",
+                            label: "📊 เปิดหน้าเว็บ Dashboard",
+                            uri: "https://line-expense-tracker-liff.vercel.app",
+                          },
+                        },
+                      ],
+                      paddingAll: "20px",
+                    },
+                  },
+                },
+              ],
+            });
+          }
 
           // ==========================================
           // A. คำสั่งลบรายการล่าสุด (เช่น พิมพ์ "ลบ" หรือ "ลบรายการ")
@@ -42,7 +251,6 @@ export const handleLineWebhook = async (
               });
             }
 
-            // คืนโควตาให้ User 1 สิทธิ์ (ถ้าไม่ใช่พรีเมียม)
             let dbUser = await User.findOne({ userId });
             if (dbUser && dbUser.quotaUsed > 0) {
               dbUser.quotaUsed -= 1;
@@ -149,7 +357,6 @@ export const handleLineWebhook = async (
               });
             }
 
-            // คำนวณยอดรวมรายรับ และรายจ่าย จากรายการที่ดึงมาแสดง
             let totalIncome = 0;
             let totalExpense = 0;
 
@@ -162,8 +369,6 @@ export const handleLineWebhook = async (
             });
 
             const netBalance = totalIncome - totalExpense;
-
-            // 📅 ดึงช่วงวันที่จากรายการ (เนื่องจาก sort จากใหม่ไปเก่า)
             const newestDate = new Date(
               recentExpenses[0].createdAt || Date.now(),
             );
@@ -184,7 +389,6 @@ export const handleLineWebhook = async (
                 ? `📅 วันที่: ${formatDate(newestDate)}`
                 : `📅 ช่วงวันที่: ${formatDate(oldestDate)} ถึง ${formatDate(newestDate)}`;
 
-            // จัดรูปแบบข้อความแสดงรายการย้อนหลัง
             let replyText = `📊 รายการล่าสุดของคุณ (${recentExpenses.length} รายการ)\n${dateRangeText}\n------------------------\n`;
 
             recentExpenses.forEach((item, index) => {
@@ -202,7 +406,6 @@ export const handleLineWebhook = async (
               replyText += `------------------------\n`;
             });
 
-            // เพิ่มส่วนสรุปยอดรวมและยอดสุทธิ
             replyText += `📈 สรุปยอดรวม:\n`;
             replyText += `🟢 รวมรายรับ: ${totalIncome.toLocaleString()} บาท\n`;
             replyText += `🔴 รวมรายจ่าย: ${totalExpense.toLocaleString()} บาท\n`;
@@ -215,7 +418,7 @@ export const handleLineWebhook = async (
           }
 
           // ==========================================
-          // 2. ตรวจสอบคำสั่งค้นหารายการเฉพาะเจาะจง (เช่น "หา กระเพรา", "ค้นหา กาแฟ")
+          // 2. ตรวจสอบคำสั่งค้นหารายการเฉพาะเจาะจง (เช่น "หา กระเพรา")
           // ==========================================
           const searchMatch = userText.match(/^(หา|ค้นหา)\s+(.+)$/i);
           if (searchMatch) {
@@ -265,7 +468,7 @@ export const handleLineWebhook = async (
           }
 
           // ==========================================
-          // 3. กระบวนการปกติ: ตรวจสอบโควตาและบันทึกข้อมูล
+          // 3. กระบวนการปกติ: ตรวจสอบโควตาและบันทึกข้อมูลจากข้อความ
           // ==========================================
           let dbUser = await User.findOne({ userId });
           if (!dbUser) {
@@ -289,7 +492,6 @@ export const handleLineWebhook = async (
             });
           }
 
-          // แยกวิเคราะห์ข้อความด้วย RegEx หรือ AI
           let expenseData = expenseService.parseQuickText(userText);
           if (!expenseData) {
             expenseData = await expenseService.parseWithAI(userText);

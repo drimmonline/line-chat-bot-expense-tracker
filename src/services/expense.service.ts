@@ -17,10 +17,16 @@ export class ExpenseService {
   }
 
   /**
-   * 1. ตรวจสอบข้อความแบบง่ายด้วย RegEx (เช่น "ข้าว 60", "ขายของ 300")
+   * 1. ตรวจสอบข้อความแบบง่ายด้วย RegEx (รองรับคำศัพท์รายรับ/รายจ่ายที่หลากหลายขึ้น)
    * ช่วยประหยัดเวลาและไม่ต้องเสีย Token โดยไม่จำเป็น
    */
   public parseQuickText(text: string): ExpenseData | null {
+    // ตรวจสอบว่าในข้อความมีตัวเลข (จำนวนเงิน) หรือไม่ ถ้าไม่มีให้ตีเป็นข้อความทั่วไปแล้วข้ามทันที
+    const hasNumber = /\d+/.test(text);
+    if (!hasNumber) {
+      return null;
+    }
+
     const regex = /^(.+?)\s+(?:(\d+)(?:\.\d+)?)\s*(?:บาท)?$/i;
     const match = text.trim().match(regex);
 
@@ -28,18 +34,20 @@ export class ExpenseService {
       const description = match[1].trim();
       const amount = parseFloat(match[2]);
 
-      // ตรวจสอบคำหลักว่าเป็นรายรับหรือไม่
-      const isIncome = /^(รับ|เงินเดือน|ขาย|กำไร|รายรับ)/i.test(description);
+      const isIncome =
+        /^(รับ|เงินเดือน|ขาย|กำไร|รายรับ|เงินเข้า|โอนเข้า|ค่าจ้าง|เงินปันผล|OT|ค่าคอม)/i.test(
+          description,
+        );
 
       return {
         description,
         amount,
         category: isIncome ? "รายรับ" : "ทั่วไป",
-        type: isIncome ? "income" : "expense", // ปรับให้เลือก type ตามเงื่อนไขจริง
+        type: isIncome ? "income" : "expense",
       };
     }
 
-    return null; // ถ้าไม่ตรงรูปแบบ ให้ส่งต่อไปให้ AI ประมวลผล
+    return null;
   }
 
   /**
@@ -181,6 +189,72 @@ export class ExpenseService {
     } catch (error) {
       console.error("Delete Expense Error:", error);
       return null;
+    }
+  }
+  // (สมมติว่าคุณมีฟังก์ชันแปลง Buffer ของรูปภาพให้เป็นรูปแบบที่ Gemini รองรับ หรือส่งเป็น base64)
+  public async parseImageWithAI(
+    imageBase64: string,
+    mimeType: string,
+  ): Promise<ExpenseData> {
+    try {
+      const responseSchema: Schema = {
+        type: Type.OBJECT,
+        properties: {
+          description: {
+            type: Type.STRING,
+            description: "ชื่อร้านค้า หรือรายละเอียดรายการจากบิล/ใบเสร็จ",
+          },
+          amount: {
+            type: Type.NUMBER,
+            description: "จำนวนเงินรวมสุทธิเป็นตัวเลข",
+          },
+          category: {
+            type: Type.STRING,
+            description: "หมวดหมู่ เช่น อาหาร, เดินทาง, ช้อปปิ้ง, ค่าน้ำไฟ",
+          },
+          type: {
+            type: Type.STRING,
+            description:
+              "ประเภทรายการ ระหว่าง income (รายรับ) หรือ expense (รายจ่าย)",
+          },
+        },
+        required: ["description", "amount", "category", "type"],
+      };
+
+      const response = await this.ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: [
+          {
+            inlineData: {
+              data: imageBase64,
+              mimeType: mimeType, // เช่น "image/jpeg" หรือ "image/png"
+            },
+          },
+          {
+            text: "ช่วยอ่านบิลหรือใบเสร็จนี้ แล้วสกัดข้อมูลยอดเงิน รายการ และหมวดหมู่ ออกมาตามโครงสร้างที่กำหนด",
+          },
+        ],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: responseSchema,
+          systemInstruction:
+            "คุณคือผู้ช่วยอัจฉริยะด้านการอ่านบิลและใบเสร็จ หน้าที่ของคุณคือดึงข้อมูลตัวเลขและรายการค่าใช้จ่ายจากรูปภาพที่ได้รับอย่างแม่นยำ",
+        },
+      });
+
+      if (response.text) {
+        return JSON.parse(response.text) as ExpenseData;
+      }
+
+      throw new Error("AI could not parse the receipt image.");
+    } catch (error) {
+      console.error("Gemini Vision Parse Error:", error);
+      return {
+        description: "ค่าใช้จ่ายจากรูปภาพ",
+        amount: 0,
+        category: "อื่นๆ",
+        type: "expense",
+      };
     }
   }
 }
