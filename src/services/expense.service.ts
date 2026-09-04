@@ -257,4 +257,41 @@ export class ExpenseService {
       };
     }
   }
+  // เพิ่มโมเดลการ parse หลายรายการพร้อมกัน
+  public async parseMultipleWithAI(text: string): Promise<ExpenseData[]> {
+    try {
+      const responseSchema: Schema = {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            description: { type: Type.STRING, description: "ชื่อรายการ" },
+            amount: { type: Type.NUMBER, description: "จำนวนเงินเป็นตัวเลข" },
+            category: { type: Type.STRING, description: "หมวดหมู่" },
+            type: { type: Type.STRING, description: "income หรือ expense" },
+          },
+          required: ["description", "amount", "category", "type"],
+        },
+      };
+
+      const response = await this.ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: `วิเคราะห์ข้อความบันทึกบัญชีหลายรายการนี้ แล้วสกัดออกมาเป็นรายการแยกกัน: "${text}"`,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: responseSchema,
+          systemInstruction:
+            "คุณคือผู้ช่วยอัจฉริยะด้านการบันทึกบัญชี หน้าที่คือสกัดข้อความที่มีหลายรายการ (เช่น กระเพรา 50 น้ำ 20) ออกมาเป็นอาเรย์ของข้อมูลรายรับ-รายจ่ายแต่ละรายการอย่างแม่นยำ",
+        },
+      });
+
+      if (response.text) {
+        return JSON.parse(response.text) as ExpenseData[];
+      }
+      return [];
+    } catch (error) {
+      console.error("Parse Multiple AI Error:", error);
+      return [];
+    }
+  }
 }

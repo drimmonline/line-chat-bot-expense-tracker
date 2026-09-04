@@ -4,8 +4,9 @@ import { lineConfig } from "../config/line.config";
 import { User } from "../models/user.model";
 import { Expense } from "../models/expense.model";
 import { ExpenseService } from "../services/expense.service";
-import axios from "axios";
+import axios from "axios"; // สำหรับโหลดไฟล์รูปภาพจาก LINE API
 
+// เปลี่ยนมาใช้ MessagingApiClient จาก messagingApi
 const client = new messagingApi.MessagingApiClient(lineConfig);
 const expenseService = new ExpenseService();
 
@@ -39,7 +40,7 @@ export const handleLineWebhook = async (
             messages: [
               {
                 type: "text",
-                text: "🤖 สวัสดีครับ! ขอบคุณที่เพิ่มเพื่อนกับ AI Expense Bot ผู้ช่วยบันทึกรายรับ-รายจ่ายอัจฉริยะ 📊\n\nคุณสามารถใช้งานได้ง่ายๆ ดังนี้:\n• พิมพ์บันทึกด่วน เช่น 'ข้าว 60' หรือ 'เงินเดือน 20000'\n• ถ่ายรูปบิลหรือสลิปเพื่อให้ AI ช่วยอ่านยอดเงินให้\n• พิมพ์ 'สรุป' เพื่อดูยอดเงินและรายการย้อนหลัง\n\nทดลองพิมพ์รายการใช้จ่ายของคุณมาได้เลยครับ!",
+                text: "🤖 สวัสดีครับ! ขอบคุณที่เพิ่มเพื่อนกับ AI Expense Bot ผู้ช่วยบันทึกรายรับ-รายจ่ายอัจฉริยะ 📊\n\nคุณสามารถใช้งานได้ง่ายๆ ดังนี้:\n• พิมพ์บันทึกด่วนหรือหลายรายการ เช่น 'กระเพรา 50 น้ำ 20'\n• ถ่ายรูปบิลหรือสลิปเพื่อให้ AI ช่วยอ่านยอดเงินให้\n• พิมพ์ 'สรุป' เพื่อดูยอดเงินและรายการย้อนหลัง\n• พิมพ์ 'ลบ' เพื่อเลือกรายการที่ต้องการลบ\n\nทดลองพิมพ์รายการใช้จ่ายของคุณมาได้เลยครับ!",
                 quickReply: {
                   items: [
                     {
@@ -48,6 +49,14 @@ export const handleLineWebhook = async (
                         type: "message",
                         label: "📊 ดูสรุปยอด",
                         text: "สรุป",
+                      },
+                    },
+                    {
+                      type: "action",
+                      action: {
+                        type: "message",
+                        label: "🗑️ ลบรายการ",
+                        text: "ลบ",
                       },
                     },
                     {
@@ -74,6 +83,7 @@ export const handleLineWebhook = async (
         if (event.type === "message" && event.message.type === "image") {
           const messageId = event.message.id;
 
+          // ตรวจสอบโควตาก่อนทำรายการรูปภาพ
           let dbUser = await User.findOne({ userId });
           if (!dbUser) {
             dbUser = await User.create({
@@ -97,6 +107,7 @@ export const handleLineWebhook = async (
           }
 
           try {
+            // ดึง Stream รูปภาพจาก LINE API โดยใช้ Channel Access Token
             const streamResponse = await axios.get(
               `https://api-data.line.me/v2/bot/message/${messageId}/content`,
               {
@@ -115,6 +126,7 @@ export const handleLineWebhook = async (
               "image/jpeg",
             );
 
+            // บันทึกลงฐานข้อมูล
             await Expense.create({
               userId,
               topic: "บันทึกจากรูปภาพ/บิล",
@@ -160,10 +172,10 @@ export const handleLineWebhook = async (
           const userText = event.message.text.trim();
 
           // ==========================================
-          // 0. ตรวจสอบคำถามวิธีใช้งาน หรือคำอธิบายความสามารถ
+          // 0. ตรวจสอบคำทักทาย, คำถามตัวตน, และคำอธิบายความสามารถ
           // ==========================================
           if (
-            /^(สวัสดี|หวัดดี|hi|hello|วิธีใช้|ใช้งานยังไง|help|คุณทำอะไรได้|สอนใช้หน่อย|ทำอะไรได้บ้าง)/i.test(
+            /^(สวัสดี|หวัดดี|hi|hello|วิธีใช้|ใช้งานยังไง|help|คุณคือใคร|เธอคือใคร|เป็นใคร|คุณทำอะไรได้|เธอทำอะไรได้|สอนใช้หน่อย|ทำอะไรได้บ้าง)/i.test(
               userText,
             )
           ) {
@@ -172,7 +184,7 @@ export const handleLineWebhook = async (
               messages: [
                 {
                   type: "text",
-                  text: "🤖 สวัสดีครับ! ผมคือผู้ช่วย AI บันทึกรายรับ-รายจ่ายอัจฉริยะ\n\nสิ่งที่ผมช่วยคุณได้:\n• บันทึกรายรับ-รายจ่ายด่วน เช่น 'ข้าว 60' หรือ 'ขายของ 500'\n• ถ่ายรูปบิลหรือสลิปเพื่อให้ AI ช่วยอ่านยอดเงินและรายการให้ทันที\n• พิมพ์เล่าเรื่องราวการใช้เงินยาวๆ ให้ AI วิเคราะห์แยกหมวดหมู่ได้\n• พิมพ์ 'สรุป' เพื่อดูยอดเงินและรายการย้อนหลัง\n• พิมพ์ 'ลบ' เพื่อยกเลิกรายการล่าสุด\n\nคุณสามารถทดลองพิมพ์ข้อความบันทึกรายการ หรือกดปุ่มเมนูด่วนด้านล่างนี้ได้เลยครับ 👇",
+                  text: "🤖 สวัสดีครับ! ผมคือ AI Expense Bot ผู้ช่วยบันทึกรายรับ-รายจ่ายอัจฉริยะส่วนตัวของคุณ\n\nสิ่งที่ผมช่วยคุณได้:\n• บันทึกรายรับ-รายจ่ายด่วน หรือหลายรายการ เช่น 'กระเพรา 50 น้ำ 20'\n• ถ่ายรูปบิลหรือสลิปเพื่อให้ AI ช่วยอ่านยอดเงินให้ทันที\n• พิมพ์ 'สรุป' เพื่อดูยอดเงินและรายการย้อนหลัง\n• พิมพ์ 'ลบ' เพื่อเลือกรายการที่ต้องการลบ\n\nคุณสามารถทดลองพิมพ์ข้อความบันทึกรายการ หรือกดปุ่มเมนูด่วนด้านล่างนี้ได้เลยครับ 👇",
                   quickReply: {
                     items: [
                       {
@@ -203,7 +215,7 @@ export const handleLineWebhook = async (
                         type: "action",
                         action: {
                           type: "message",
-                          label: "🗑️ ลบรายการล่าสุด",
+                          label: "🗑️ ลบรายการ",
                           text: "ลบ",
                         },
                       },
@@ -223,10 +235,60 @@ export const handleLineWebhook = async (
           }
 
           // ==========================================
-          // A. คำสั่งลบรายการล่าสุด
+          // A. คำสั่ง "ลบ" -> แสดงรายการล่าสุดเป็น Quick Reply ให้กดเลือก
           // ==========================================
-          if (/^(ลบ|ลบรายการ|ลบรายการล่าสุด)/i.test(userText)) {
-            const deleted = await expenseService.deleteLatestExpense(userId);
+          if (/^(ลบ|ลบรายการ|ลบรายการล่าสุด)$/i.test(userText)) {
+            const recentExpenses = await expenseService.getRecentExpenses(
+              userId,
+              5,
+            );
+
+            if (recentExpenses.length === 0) {
+              return client.replyMessage({
+                replyToken: event.replyToken,
+                messages: [
+                  {
+                    type: "text",
+                    text: "📭 ไม่พบรายการให้ลบครับ คุณยังไม่มีประวัติการบันทึก",
+                  },
+                ],
+              });
+            }
+
+            const quickItems = recentExpenses.map((item) => {
+              const shortDesc =
+                item.description.length > 15
+                  ? item.description.substring(0, 15) + "..."
+                  : item.description;
+              const typeSymbol = item.type === "income" ? "🟢" : "🔴";
+              return {
+                type: "action" as const,
+                action: {
+                  type: "message" as const, // กำหนด type ให้ชัดเจนว่าเป็น message action
+                  label: `${typeSymbol} ${shortDesc} (${item.amount}฿)`,
+                  text: `CONFIRM_DELETE_${item._id}`,
+                },
+              };
+            });
+
+            return client.replyMessage({
+              replyToken: event.replyToken,
+              messages: [
+                {
+                  type: "text",
+                  text: "🗑️ กรุณาเลือกรายการที่ต้องการลบจากปุ่มด้านล่างครับ 👇",
+                  quickReply: { items: quickItems },
+                },
+              ],
+            });
+          }
+
+          // ==========================================
+          // A.2 ยืนยันการลบตาม ID ที่กดมาจาก Quick Reply
+          // ==========================================
+          if (userText.startsWith("CONFIRM_DELETE_")) {
+            const expenseId = userText.replace("CONFIRM_DELETE_", "");
+            const deleted = await Expense.findByIdAndDelete(expenseId);
 
             if (!deleted) {
               return client.replyMessage({
@@ -234,7 +296,7 @@ export const handleLineWebhook = async (
                 messages: [
                   {
                     type: "text",
-                    text: "📭 ไม่พบรายการให้ลบครับ คุณยังไม่มีประวัติการบันทึก",
+                    text: "⚠️ ไม่พบรายการนี้ หรืออาจถูกลบไปแล้วครับ",
                   },
                 ],
               });
@@ -253,14 +315,14 @@ export const handleLineWebhook = async (
               messages: [
                 {
                   type: "text",
-                  text: `🗑️ ลบรายการล่าสุดเรียบร้อยแล้ว!\n\n📌 ประเภท: ${typeText}\n📝 รายการ: ${deleted.description}\n💰 จำนวน: ${deleted.amount} บาท`,
+                  text: `🗑️ ลบรายการเรียบร้อยแล้ว!\n\n📌 ประเภท: ${typeText}\n📝 รายการ: ${deleted.description}\n💰 จำนวน: ${deleted.amount} บาท`,
                 },
               ],
             });
           }
 
           // ==========================================
-          // B. คำสั่งดูเฉพาะรายรับ
+          // B. คำสั่งดูเฉพาะรายรับ (เช่น พิมพ์ "ดูรายรับ" หรือ "รายรับ")
           // ==========================================
           if (/^ดูรายรับ|รายรับ$/i.test(userText)) {
             const incomes = await expenseService.getFilteredExpenses(
@@ -293,7 +355,7 @@ export const handleLineWebhook = async (
           }
 
           // ==========================================
-          // C. คำสั่งดูเฉพาะรายจ่าย
+          // C. คำสั่งดูเฉพาะรายจ่าย (เช่น พิมพ์ "ดูรายจ่าย" หรือ "รายจ่าย")
           // ==========================================
           if (/^ดูรายจ่าย|รายจ่าย$/i.test(userText)) {
             const expenses = await expenseService.getFilteredExpenses(
@@ -326,7 +388,7 @@ export const handleLineWebhook = async (
           }
 
           // ==========================================
-          // 1. ตรวจสอบคำสั่งขอดูรายการสรุป
+          // 1. ตรวจสอบคำสั่งขอดูรายการสรุป (เช่น "สรุป", "รายการ", "ดูรายการ")
           // ==========================================
           if (/^(สรุป|รายการ|ดูรายการ|ประวัติ)/i.test(userText)) {
             const recentExpenses = await expenseService.getRecentExpenses(
@@ -407,7 +469,7 @@ export const handleLineWebhook = async (
           }
 
           // ==========================================
-          // 2. ตรวจสอบคำสั่งค้นหารายการเฉพาะเจาะจง
+          // 2. ตรวจสอบคำสั่งค้นหารายการเฉพาะเจาะจง (เช่น "หา กระเพรา")
           // ==========================================
           const searchMatch = userText.match(/^(หา|ค้นหา)\s+(.+)$/i);
           if (searchMatch) {
@@ -457,7 +519,7 @@ export const handleLineWebhook = async (
           }
 
           // ==========================================
-          // 3. ตรวจสอบว่ามีตัวเลขในข้อความหรือไม่ (ถ้าไม่มีหรือคุยเล่นนอกเรื่อง ให้ปฏิเสธ)
+          // 3. ตรวจสอบว่ามีตัวเลขในข้อความหรือไม่ (ถ้าไม่มี ให้ปฏิเสธ)
           // ==========================================
           const hasNumber = /\d+/.test(userText);
           if (!hasNumber) {
@@ -473,7 +535,7 @@ export const handleLineWebhook = async (
           }
 
           // ==========================================
-          // 4. กระบวนการปกติ: ตรวจสอบโควตาและบันทึกข้อมูลจากข้อความ
+          // 4. กระบวนการปกติ: ตรวจสอบโควตาและบันทึกข้อมูล (รองรับหลายรายการ)
           // ==========================================
           let dbUser = await User.findOne({ userId });
           if (!dbUser) {
@@ -497,12 +559,59 @@ export const handleLineWebhook = async (
             });
           }
 
+          // ลองตรวจสอบแบบหลายรายการก่อน (เช่น "กระเพรา 50 น้ำ 20")
+          let multipleItems: any[] = [];
+          try {
+            if (
+              typeof (expenseService as any).parseMultipleWithAI === "function"
+            ) {
+              multipleItems = await (expenseService as any).parseMultipleWithAI(
+                userText,
+              );
+            }
+          } catch (e) {
+            console.error("Multiple parse error:", e);
+          }
+
+          if (multipleItems && multipleItems.length > 0) {
+            let successCount = 0;
+            let summaryReply =
+              "✅ บันทึกหลายรายการสำเร็จ:\n------------------------\n";
+
+            for (const item of multipleItems) {
+              if (item.amount && item.amount > 0) {
+                await Expense.create({
+                  userId,
+                  topic: "บันทึกหลายรายการ",
+                  description: item.description,
+                  amount: item.amount,
+                  category: item.category,
+                  type: item.type,
+                });
+                successCount++;
+                const typeSymbol = item.type === "income" ? "🟢" : "🔴";
+                summaryReply += `${typeSymbol} ${item.description}: ${item.amount} บาท\n`;
+              }
+            }
+
+            if (successCount > 0) {
+              dbUser.quotaUsed += successCount;
+              await dbUser.save();
+              summaryReply += `------------------------\n(ใช้งานไปแล้ว ${dbUser.quotaUsed}/${dbUser.isPremium ? "∞" : FREE_LIMIT} รายการ)`;
+              return client.replyMessage({
+                replyToken: event.replyToken,
+                messages: [{ type: "text", text: summaryReply }],
+              });
+            }
+          }
+
+          // Fallback ถ้าไม่ใช่หลายรายการ ให้ประมวลผลแบบรายการเดียวปกติ
           let expenseData = expenseService.parseQuickText(userText);
           if (!expenseData) {
             expenseData = await expenseService.parseWithAI(userText);
           }
 
-          // ป้องกันกรณี AI ตีความข้อความไม่มีตัวเลขหลุดรอดมาได้
+          // ป้องกันกรณี AI ตีความแล้วไม่มีจำนวนเงิน
           if (!expenseData || !expenseData.amount || expenseData.amount === 0) {
             return client.replyMessage({
               replyToken: event.replyToken,
