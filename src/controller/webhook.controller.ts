@@ -34,7 +34,116 @@ export const handleLineWebhook = async (
               });
             }
           }
+          // ==========================================
+          // 1. กรณีผู้ใช้ส่งรูปภาพมา (ถ่ายบิล / สลิป)
+          // ==========================================
+          if (event.type === "message" && event.message.type === "image") {
+            const messageId = event.message.id;
 
+            let dbUser = await User.findOne({ userId });
+            if (!dbUser) {
+              dbUser = await User.create({
+                userId,
+                isPremium: false,
+                quotaUsed: 0,
+              });
+            }
+
+            const FREE_LIMIT = 30;
+            if (!dbUser.isPremium && dbUser.quotaUsed >= FREE_LIMIT) {
+              return client.replyMessage({
+                replyToken: event.replyToken,
+                messages: [
+                  {
+                    type: "text",
+                    text: "⚠️ คุณใช้โควตาฟรีครบกำหนดแล้ว กรุณาอัปเกรดเป็นแพ็กเกจพรีเมียมเพื่อใช้งานต่อครับ",
+                  },
+                ],
+              });
+            }
+
+            try {
+              const streamResponse = await axios.get(
+                `https://api-data.line.me/v2/bot/message/${messageId}/content`,
+                {
+                  headers: {
+                    Authorization: `Bearer ${lineConfig.channelAccessToken}`,
+                  },
+                  responseType: "arraybuffer",
+                },
+              );
+
+              const imageBase64 = Buffer.from(streamResponse.data).toString(
+                "base64",
+              );
+
+              // เรียกใช้ฟังก์ชันอ่านบิลหลายรายการ
+              const receiptItems = await expenseService.parseReceiptImageWithAI(
+                imageBase64,
+                "image/jpeg",
+              );
+
+              if (!receiptItems || receiptItems.length === 0) {
+                return client.replyMessage({
+                  replyToken: event.replyToken,
+                  messages: [
+                    {
+                      type: "text",
+                      text: "❌ ไม่สามารถอ่านรายการสินค้าจากใบเสร็จนี้ได้ ลองใหม่อีกครั้งนะครับ",
+                    },
+                  ],
+                });
+              }
+
+              let successCount = 0;
+              let summaryReply =
+                "📸 อ่านใบเสร็จสำเร็จ!\n------------------------\n";
+              let grandTotal = 0;
+
+              for (const item of receiptItems) {
+                if (item.amount && item.amount > 0) {
+                  await Expense.create({
+                    userId,
+                    topic: "บันทึกจากสลิป/ใบเสร็จ",
+                    description: item.description,
+                    amount: item.amount,
+                    category: item.category || "ทั่วไป",
+                    type: item.type || "expense",
+                  });
+                  successCount++;
+                  grandTotal += item.amount;
+                  summaryReply += `🔴 ${item.description}: ${item.amount} บาท\n`;
+                }
+              }
+
+              if (successCount > 0) {
+                dbUser.quotaUsed += successCount;
+                await dbUser.save();
+                summaryReply += `------------------------\n💰 ยอดรวมสุทธิ: ${grandTotal.toFixed(2)} บาท\n(ใช้งานโควตาไป ${successCount} รายการ)`;
+              }
+
+              return client.replyMessage({
+                replyToken: event.replyToken,
+                messages: [
+                  {
+                    type: "text",
+                    text: summaryReply,
+                  },
+                ],
+              });
+            } catch (imgErr) {
+              console.error("Image processing error:", imgErr);
+              return client.replyMessage({
+                replyToken: event.replyToken,
+                messages: [
+                  {
+                    type: "text",
+                    text: "❌ เกิดข้อผิดพลาดในการประมวลผลรูปภาพบิลครับ",
+                  },
+                ],
+              });
+            }
+          }
           return client.replyMessage({
             replyToken: event.replyToken,
             messages: [

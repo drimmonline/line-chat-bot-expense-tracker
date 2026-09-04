@@ -294,4 +294,69 @@ export class ExpenseService {
       return [];
     }
   }
+
+  // เพิ่มฟังก์ชันสำหรับอ่านบิล/สลิปที่มีหลายรายการ
+  public async parseReceiptImageWithAI(
+    imageBase64: string,
+    mimeType: string,
+  ): Promise<ExpenseData[]> {
+    try {
+      const responseSchema: Schema = {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            description: {
+              type: Type.STRING,
+              description: "ชื่อสินค้าหรือรายการจากใบเสร็จ",
+            },
+            amount: {
+              type: Type.NUMBER,
+              description: "จำนวนเงินของรายการนั้นๆ เป็นตัวเลข",
+            },
+            category: {
+              type: Type.STRING,
+              description: "หมวดหมู่ เช่น อาหาร, เครื่องดื่ม, ของใช้",
+            },
+            type: {
+              type: Type.STRING,
+              description:
+                "ประเภทรายการ ระหว่าง income (รายรับ) หรือ expense (รายจ่าย)",
+            },
+          },
+          required: ["description", "amount", "category", "type"],
+        },
+      };
+
+      const response = await this.ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: [
+          {
+            inlineData: {
+              data: imageBase64,
+              mimeType: mimeType,
+            },
+          },
+          {
+            text: "ช่วยอ่านใบเสร็จนี้ แล้วสกัดรายการสินค้าที่มีราคามากกว่า 0 บาท ออกมาทั้งหมดเป็นอาเรย์ (Array) แยกแต่ละรายการให้ถูกต้อง",
+          },
+        ],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: responseSchema,
+          systemInstruction:
+            "คุณคือผู้ช่วยอัจฉริยะด้านการอ่านใบเสร็จ 7-Eleven และบิลซื้อของ หน้าที่ของคุณคือดึงรายการสินค้าและราคาที่ต้องจ่ายจริง (กรองรายการที่เป็น 0 บาททิ้งไป) แยกออกมาเป็นรายการเดี่ยวๆ ให้ครบถ้วน",
+        },
+      });
+
+      if (response.text) {
+        return JSON.parse(response.text) as ExpenseData[];
+      }
+
+      return [];
+    } catch (error) {
+      console.error("Gemini Vision Receipt Parse Error:", error);
+      return [];
+    }
+  }
 }
