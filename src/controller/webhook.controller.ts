@@ -40,7 +40,7 @@ export const handleLineWebhook = async (
             messages: [
               {
                 type: "text",
-                text: "🤖 สวัสดีครับ! ขอบคุณที่เพิ่มเพื่อนกับ AI Expense Bot ผู้ช่วยบันทึกรายรับ-รายจ่ายอัจฉริยะ 📊\n\nคุณสามารถใช้งานได้ง่ายๆ ดังนี้:\n• พิมพ์บันทึกด่วนหรือหลายรายการ เช่น 'กระเพรา 50 น้ำ 20'\n• ถ่ายรูปบิลหรือสลิปเพื่อให้ AI ช่วยอ่านยอดเงินให้\n• พิมพ์ 'สรุป' เพื่อดูยอดเงินและรายการย้อนหลัง\n• พิมพ์ 'ลบ' เพื่อเลือกรายการที่ต้องการลบ\n\nทดลองพิมพ์รายการใช้จ่ายของคุณมาได้เลยครับ!",
+                text: "🤖 สวัสดีครับ! ขอบคุณที่เพิ่มเพื่อนกับ AI Expense Bot ผู้ช่วยบันทึกรายรับ-รายจ่ายอัจฉริยะ 📊\n\nคุณสามารถใช้งานได้ง่ายๆ ดังนี้:\n• พิมพ์บันทึกด่วนหรือหลายรายการ เช่น 'กระเพรา 50 น้ำ 20'\n• ถ่ายรูปบิลหรือสลิปเพื่อให้ AI ช่วยอ่านยอดเงินให้\n• พิมพ์ 'สรุป' เพื่อดูยอดเงินและรายการย้อนหลัง\n• พิมพ์ 'ลบ' เพื่อเลือกรายการที่ต้องการลบพร้อมระบบยืนยัน\n\nทดลองพิมพ์รายการใช้จ่ายของคุณมาได้เลยครับ!",
                 quickReply: {
                   items: [
                     {
@@ -203,7 +203,59 @@ export const handleLineWebhook = async (
           const userText = event.message.text.trim();
 
           // ==========================================
-          // A.2 ยืนยันการลบตาม ID ที่กดมาจาก Quick Reply (ย้ายมาไว้บนสุด)
+          // A.1 ขั้นตอนที่ 2: บอทถามย้ำว่า "ต้องการลบรายการนี้ใช่ไหม" (ก่อนลบจริง)
+          // ==========================================
+          if (userText.startsWith("ASK_DELETE_")) {
+            const expenseId = userText.replace("ASK_DELETE_", "");
+            const targetExpense = await Expense.findById(expenseId);
+
+            if (!targetExpense) {
+              return client.replyMessage({
+                replyToken: event.replyToken,
+                messages: [
+                  {
+                    type: "text",
+                    text: "⚠️ ไม่พบรายการนี้ในระบบ หรืออาจถูกลบไปแล้วครับ",
+                  },
+                ],
+              });
+            }
+
+            const typeSymbol =
+              targetExpense.type === "income" ? "🟢 รายรับ" : "🔴 รายจ่าย";
+            return client.replyMessage({
+              replyToken: event.replyToken,
+              messages: [
+                {
+                  type: "text",
+                  text: `⚠️ คุณต้องการลบรายการนี้ใช่ไหม?\n\n📌 ประเภท: ${typeSymbol}\n📝 รายการ: ${targetExpense.description}\n💰 จำนวน: ${targetExpense.amount} บาท`,
+                  quickReply: {
+                    items: [
+                      {
+                        type: "action" as const,
+                        action: {
+                          type: "message" as const,
+                          label: "✅ ใช่, ยืนยันลบ",
+                          text: `CONFIRM_DELETE_${targetExpense._id}`,
+                        },
+                      },
+                      {
+                        type: "action" as const,
+                        action: {
+                          type: "message" as const,
+                          label: "❌ ยกเลิก",
+                          text: "ยกเลิก",
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            });
+          }
+
+          // ==========================================
+          // A.2 ขั้นตอนที่ 3: ดำเนินการลบจริงหลังจากกดยืนยัน
           // ==========================================
           if (userText.startsWith("CONFIRM_DELETE_")) {
             const expenseId = userText.replace("CONFIRM_DELETE_", "");
@@ -241,6 +293,49 @@ export const handleLineWebhook = async (
           }
 
           // ==========================================
+          // B.1 ยืนยันบันทึกซ้ำ (กรณีผู้ใช้กดปุ่ม FORCE_SAVE_)
+          // ==========================================
+          if (userText.startsWith("FORCE_SAVE_")) {
+            try {
+              const payload = JSON.parse(userText.replace("FORCE_SAVE_", ""));
+              let dbUser = await User.findOne({ userId });
+              if (!dbUser) {
+                dbUser = await User.create({
+                  userId,
+                  isPremium: false,
+                  quotaUsed: 0,
+                });
+              }
+
+              await Expense.create({
+                userId,
+                topic: "บันทึกรายรับรายจ่าย",
+                description: payload.description,
+                amount: payload.amount,
+                category: payload.category,
+                type: payload.type,
+              });
+
+              dbUser.quotaUsed += 1;
+              await dbUser.save();
+
+              const typeText =
+                payload.type === "income" ? "🟢 รายรับ" : "🔴 รายจ่าย";
+              return client.replyMessage({
+                replyToken: event.replyToken,
+                messages: [
+                  {
+                    type: "text",
+                    text: `✅ บันทึกรายการซ้ำสำเร็จตามคำขอ!\n\n📌 ประเภท: ${typeText}\n📝 รายการ: ${payload.description}\n💰 จำนวน: ${payload.amount} บาท`,
+                  },
+                ],
+              });
+            } catch (err) {
+              console.error("Force save error:", err);
+            }
+          }
+
+          // ==========================================
           // 0. ตรวจสอบคำทักทาย, คำถามตัวตน, และคำอธิบายความสามารถ
           // ==========================================
           if (
@@ -253,7 +348,7 @@ export const handleLineWebhook = async (
               messages: [
                 {
                   type: "text",
-                  text: "🤖 สวัสดีครับ! ผมคือ AI Expense Bot ผู้ช่วยบันทึกรายรับ-รายจ่ายอัจฉริยะส่วนตัวของคุณ\n\nสิ่งที่ผมช่วยคุณได้:\n• บันทึกรายรับ-รายจ่ายด่วน หรือหลายรายการ เช่น 'กระเพรา 50 น้ำ 20'\n• ถ่ายรูปบิลหรือสลิปเพื่อให้ AI ช่วยอ่านยอดเงินให้ทันที\n• พิมพ์ 'สรุป' เพื่อดูยอดเงินและรายการย้อนหลัง\n• พิมพ์ 'ลบ' เพื่อเลือกรายการที่ต้องการลบ\n\nคุณสามารถทดลองพิมพ์ข้อความบันทึกรายการ หรือกดปุ่มเมนูด่วนด้านล่างนี้ได้เลยครับ 👇",
+                  text: "🤖 สวัสดีครับ! ผมคือ AI Expense Bot ผู้ช่วยบันทึกรายรับ-รายจ่ายอัจฉริยะส่วนตัวของคุณ\n\nสิ่งที่ผมช่วยคุณได้:\n• บันทึกรายรับ-รายจ่ายด่วน หรือหลายรายการ เช่น 'กระเพรา 50 น้ำ 20'\n• ถ่ายรูปบิลหรือสลิปเพื่อให้ AI ช่วยอ่านยอดเงินให้ทันที\n• พิมพ์ 'สรุป' เพื่อดูยอดเงินและรายการย้อนหลัง\n• พิมพ์ 'ลบ' เพื่อเลือกรายการและกดยืนยันก่อนลบ\n• ระบบแจ้งเตือนอัตโนมัติหากบันทึกรายการซ้ำ\n\nคุณสามารถทดลองพิมพ์ข้อความบันทึกรายการ หรือกดปุ่มเมนูด่วนด้านล่างนี้ได้เลยครับ 👇",
                   quickReply: {
                     items: [
                       {
@@ -304,7 +399,7 @@ export const handleLineWebhook = async (
           }
 
           // ==========================================
-          // A. คำสั่ง "ลบ" -> แสดงรายการล่าสุดเป็น Quick Reply ให้กดเลือก
+          // A. คำสั่ง "ลบ" -> แสดงรายการล่าสุดเป็น Quick Reply ให้กดเลือก (ไปขั้นตอนถามย้ำ)
           // ==========================================
           if (/^(ลบ|ลบรายการ|ลบรายการล่าสุด)$/i.test(userText)) {
             const recentExpenses = await expenseService.getRecentExpenses(
@@ -335,7 +430,7 @@ export const handleLineWebhook = async (
                 action: {
                   type: "message" as const,
                   label: `${typeSymbol} ${shortDesc} (${item.amount}฿)`,
-                  text: `CONFIRM_DELETE_${item._id}`,
+                  text: `ASK_DELETE_${item._id}`, // เปลี่ยนให้ไปถามยืนยันก่อน
                 },
               };
             });
@@ -345,7 +440,7 @@ export const handleLineWebhook = async (
               messages: [
                 {
                   type: "text",
-                  text: "🗑️ กรุณาเลือกรายการที่ต้องการลบจากปุ่มด้านล่างครับ 👇",
+                  text: "🗑️ กรุณาเลือกรายการที่ต้องการตรวจสอบเพื่อลบครับ 👇",
                   quickReply: { items: quickItems },
                 },
               ],
@@ -611,17 +706,32 @@ export const handleLineWebhook = async (
 
             for (const item of multipleItems) {
               if (item.amount && item.amount > 0) {
-                await Expense.create({
-                  userId,
-                  topic: "บันทึกหลายรายการ",
-                  description: item.description,
-                  amount: item.amount,
-                  category: item.category,
-                  type: item.type,
-                });
-                successCount++;
-                const typeSymbol = item.type === "income" ? "🟢" : "🔴";
-                summaryReply += `${typeSymbol} ${item.description}: ${item.amount} บาท\n`;
+                // เช็คซ้ำสำหรับระบบหลายรายการ
+                const isDuplicate =
+                  typeof (expenseService as any).checkDuplicateExpense ===
+                  "function"
+                    ? await (expenseService as any).checkDuplicateExpense(
+                        userId,
+                        item.description,
+                        item.amount,
+                      )
+                    : null;
+
+                if (!isDuplicate) {
+                  await Expense.create({
+                    userId,
+                    topic: "บันทึกหลายรายการ",
+                    description: item.description,
+                    amount: item.amount,
+                    category: item.category,
+                    type: item.type,
+                  });
+                  successCount++;
+                  const typeSymbol = item.type === "income" ? "🟢" : "🔴";
+                  summaryReply += `${typeSymbol} ${item.description}: ${item.amount} บาท\n`;
+                } else {
+                  summaryReply += `⚠️ ข้าม (ซ้ำ): ${item.description} (${item.amount}฿)\n`;
+                }
               }
             }
 
@@ -650,6 +760,53 @@ export const handleLineWebhook = async (
                 {
                   type: "text",
                   text: "ขออภัยผมไม่สามารถช่วยเหลือเรื่องนั้นได้",
+                },
+              ],
+            });
+          }
+
+          // 🔍 ตรวจสอบรายการซ้ำสำหรับรายการเดี่ยว
+          const duplicate =
+            typeof (expenseService as any).checkDuplicateExpense === "function"
+              ? await (expenseService as any).checkDuplicateExpense(
+                  userId,
+                  expenseData.description,
+                  expenseData.amount,
+                )
+              : null;
+
+          if (duplicate) {
+            return client.replyMessage({
+              replyToken: event.replyToken,
+              messages: [
+                {
+                  type: "text",
+                  text: `⚠️ พบรายการ "${expenseData.description}" จำนวน ${expenseData.amount} บาท ถูกบันทึกไปแล้วในวันนี้ คุณต้องการบันทึกซ้ำอีกครั้งหรือไม่?`,
+                  quickReply: {
+                    items: [
+                      {
+                        type: "action" as const,
+                        action: {
+                          type: "message" as const,
+                          label: "✅ ยืนยันบันทึกซ้ำ",
+                          text: `FORCE_SAVE_${JSON.stringify({
+                            description: expenseData.description,
+                            amount: expenseData.amount,
+                            category: expenseData.category,
+                            type: expenseData.type,
+                          })}`,
+                        },
+                      },
+                      {
+                        type: "action" as const,
+                        action: {
+                          type: "message" as const,
+                          label: "❌ ยกเลิก",
+                          text: "ยกเลิก",
+                        },
+                      },
+                    ],
+                  },
                 },
               ],
             });

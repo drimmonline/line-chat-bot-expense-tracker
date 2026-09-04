@@ -294,7 +294,27 @@ export class ExpenseService {
       return [];
     }
   }
+  // ตรวจสอบรายการซ้ำในวันเดียวกัน
+  public async checkDuplicateExpense(
+    userId: string,
+    description: string,
+    amount: number,
+  ) {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
 
+    const endOfDay = new Date();
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const existing = await Expense.findOne({
+      userId,
+      description: { $regex: new RegExp(`^${description}$`, "i") }, // เช็คชื่อตรงกัน (ไม่สนตัวพิมพ์เล็กใหญ่)
+      amount,
+      createdAt: { $gte: startOfDay, $lte: endOfDay },
+    });
+
+    return existing;
+  }
   // เพิ่มฟังก์ชันสำหรับอ่านบิล/สลิปที่มีหลายรายการ
   public async parseReceiptImageWithAI(
     imageBase64: string,
