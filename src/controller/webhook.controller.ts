@@ -34,116 +34,7 @@ export const handleLineWebhook = async (
               });
             }
           }
-          // ==========================================
-          // 1. กรณีผู้ใช้ส่งรูปภาพมา (ถ่ายบิล / สลิป)
-          // ==========================================
-          if (event.type === "message" && event.message.type === "image") {
-            const messageId = event.message.id;
 
-            let dbUser = await User.findOne({ userId });
-            if (!dbUser) {
-              dbUser = await User.create({
-                userId,
-                isPremium: false,
-                quotaUsed: 0,
-              });
-            }
-
-            const FREE_LIMIT = 30;
-            if (!dbUser.isPremium && dbUser.quotaUsed >= FREE_LIMIT) {
-              return client.replyMessage({
-                replyToken: event.replyToken,
-                messages: [
-                  {
-                    type: "text",
-                    text: "⚠️ คุณใช้โควตาฟรีครบกำหนดแล้ว กรุณาอัปเกรดเป็นแพ็กเกจพรีเมียมเพื่อใช้งานต่อครับ",
-                  },
-                ],
-              });
-            }
-
-            try {
-              const streamResponse = await axios.get(
-                `https://api-data.line.me/v2/bot/message/${messageId}/content`,
-                {
-                  headers: {
-                    Authorization: `Bearer ${lineConfig.channelAccessToken}`,
-                  },
-                  responseType: "arraybuffer",
-                },
-              );
-
-              const imageBase64 = Buffer.from(streamResponse.data).toString(
-                "base64",
-              );
-
-              // เรียกใช้ฟังก์ชันอ่านบิลหลายรายการ
-              const receiptItems = await expenseService.parseReceiptImageWithAI(
-                imageBase64,
-                "image/jpeg",
-              );
-
-              if (!receiptItems || receiptItems.length === 0) {
-                return client.replyMessage({
-                  replyToken: event.replyToken,
-                  messages: [
-                    {
-                      type: "text",
-                      text: "❌ ไม่สามารถอ่านรายการสินค้าจากใบเสร็จนี้ได้ ลองใหม่อีกครั้งนะครับ",
-                    },
-                  ],
-                });
-              }
-
-              let successCount = 0;
-              let summaryReply =
-                "📸 อ่านใบเสร็จสำเร็จ!\n------------------------\n";
-              let grandTotal = 0;
-
-              for (const item of receiptItems) {
-                if (item.amount && item.amount > 0) {
-                  await Expense.create({
-                    userId,
-                    topic: "บันทึกจากสลิป/ใบเสร็จ",
-                    description: item.description,
-                    amount: item.amount,
-                    category: item.category || "ทั่วไป",
-                    type: item.type || "expense",
-                  });
-                  successCount++;
-                  grandTotal += item.amount;
-                  summaryReply += `🔴 ${item.description}: ${item.amount} บาท\n`;
-                }
-              }
-
-              if (successCount > 0) {
-                dbUser.quotaUsed += successCount;
-                await dbUser.save();
-                summaryReply += `------------------------\n💰 ยอดรวมสุทธิ: ${grandTotal.toFixed(2)} บาท\n(ใช้งานโควตาไป ${successCount} รายการ)`;
-              }
-
-              return client.replyMessage({
-                replyToken: event.replyToken,
-                messages: [
-                  {
-                    type: "text",
-                    text: summaryReply,
-                  },
-                ],
-              });
-            } catch (imgErr) {
-              console.error("Image processing error:", imgErr);
-              return client.replyMessage({
-                replyToken: event.replyToken,
-                messages: [
-                  {
-                    type: "text",
-                    text: "❌ เกิดข้อผิดพลาดในการประมวลผลรูปภาพบิลครับ",
-                  },
-                ],
-              });
-            }
-          }
           return client.replyMessage({
             replyToken: event.replyToken,
             messages: [
@@ -153,25 +44,25 @@ export const handleLineWebhook = async (
                 quickReply: {
                   items: [
                     {
-                      type: "action",
+                      type: "action" as const,
                       action: {
-                        type: "message",
+                        type: "message" as const,
                         label: "📊 ดูสรุปยอด",
                         text: "สรุป",
                       },
                     },
                     {
-                      type: "action",
+                      type: "action" as const,
                       action: {
-                        type: "message",
+                        type: "message" as const,
                         label: "🗑️ ลบรายการ",
                         text: "ลบ",
                       },
                     },
                     {
-                      type: "action",
+                      type: "action" as const,
                       action: {
-                        type: "message",
+                        type: "message" as const,
                         label: "❓ คุณทำอะไรได้บ้าง",
                         text: "คุณทำอะไรได้",
                       },
@@ -192,7 +83,6 @@ export const handleLineWebhook = async (
         if (event.type === "message" && event.message.type === "image") {
           const messageId = event.message.id;
 
-          // ตรวจสอบโควตาก่อนทำรายการรูปภาพ
           let dbUser = await User.findOne({ userId });
           if (!dbUser) {
             dbUser = await User.create({
@@ -216,7 +106,6 @@ export const handleLineWebhook = async (
           }
 
           try {
-            // ดึง Stream รูปภาพจาก LINE API โดยใช้ Channel Access Token
             const streamResponse = await axios.get(
               `https://api-data.line.me/v2/bot/message/${messageId}/content`,
               {
@@ -230,33 +119,66 @@ export const handleLineWebhook = async (
             const imageBase64 = Buffer.from(streamResponse.data).toString(
               "base64",
             );
-            const expenseData = await expenseService.parseImageWithAI(
-              imageBase64,
-              "image/jpeg",
-            );
 
-            // บันทึกลงฐานข้อมูล
-            await Expense.create({
-              userId,
-              topic: "บันทึกจากรูปภาพ/บิล",
-              description: expenseData.description,
-              amount: expenseData.amount,
-              category: expenseData.category,
-              type: expenseData.type,
-            });
+            // รองรับการอ่านบิลหลายรายการ (เช่น 7-Delivery)
+            const receiptItems = (await (expenseService as any)
+              .parseReceiptImageWithAI)
+              ? await (expenseService as any).parseReceiptImageWithAI(
+                  imageBase64,
+                  "image/jpeg",
+                )
+              : [
+                  await expenseService.parseImageWithAI(
+                    imageBase64,
+                    "image/jpeg",
+                  ),
+                ];
 
-            dbUser.quotaUsed += 1;
-            await dbUser.save();
+            if (!receiptItems || receiptItems.length === 0) {
+              return client.replyMessage({
+                replyToken: event.replyToken,
+                messages: [
+                  {
+                    type: "text",
+                    text: "❌ ไม่สามารถอ่านรายการสินค้าจากใบเสร็จนี้ได้ ลองใหม่อีกครั้งนะครับ",
+                  },
+                ],
+              });
+            }
 
-            const typeText =
-              expenseData.type === "income" ? "🟢 รายรับ" : "🔴 รายจ่าย";
+            let successCount = 0;
+            let summaryReply =
+              "📸 อ่านใบเสร็จสำเร็จ!\n------------------------\n";
+            let grandTotal = 0;
+
+            for (const item of receiptItems) {
+              if (item.amount && item.amount > 0) {
+                await Expense.create({
+                  userId,
+                  topic: "บันทึกจากสลิป/ใบเสร็จ",
+                  description: item.description,
+                  amount: item.amount,
+                  category: item.category || "ทั่วไป",
+                  type: item.type || "expense",
+                });
+                successCount++;
+                grandTotal += item.amount;
+                summaryReply += `🔴 ${item.description}: ${item.amount} บาท\n`;
+              }
+            }
+
+            if (successCount > 0) {
+              dbUser.quotaUsed += successCount;
+              await dbUser.save();
+              summaryReply += `------------------------\n💰 ยอดรวมสุทธิ: ${grandTotal.toFixed(2)} บาท\n(ใช้งานโควตาไป ${successCount} รายการ)`;
+            }
 
             return client.replyMessage({
               replyToken: event.replyToken,
               messages: [
                 {
                   type: "text",
-                  text: `📸 อ่านบิล/สลิปสำเร็จ!\n\n📌 ประเภท: ${typeText}\n📝 รายการ: ${expenseData.description}\n💰 จำนวน: ${expenseData.amount} บาท\n📂 หมวดหมู่: ${expenseData.category}\n\n(ใช้งานไปแล้ว ${dbUser.quotaUsed}/${dbUser.isPremium ? "∞" : FREE_LIMIT} รายการ)`,
+                  text: summaryReply,
                 },
               ],
             });
@@ -267,7 +189,7 @@ export const handleLineWebhook = async (
               messages: [
                 {
                   type: "text",
-                  text: "❌ ไม่สามารถอ่านรูปภาพนี้ได้ ลองใหม่อีกครั้งหรือพิมพ์ข้อความแทนนะครับ",
+                  text: "❌ เกิดข้อผิดพลาดในการประมวลผลรูปภาพบิลครับ",
                 },
               ],
             });
@@ -279,6 +201,44 @@ export const handleLineWebhook = async (
         // ==========================================
         if (event.type === "message" && event.message.type === "text") {
           const userText = event.message.text.trim();
+
+          // ==========================================
+          // A.2 ยืนยันการลบตาม ID ที่กดมาจาก Quick Reply (ย้ายมาไว้บนสุด)
+          // ==========================================
+          if (userText.startsWith("CONFIRM_DELETE_")) {
+            const expenseId = userText.replace("CONFIRM_DELETE_", "");
+            const deleted = await Expense.findByIdAndDelete(expenseId);
+
+            if (!deleted) {
+              return client.replyMessage({
+                replyToken: event.replyToken,
+                messages: [
+                  {
+                    type: "text",
+                    text: "⚠️ ไม่พบรายการนี้ หรืออาจถูกลบไปแล้วครับ",
+                  },
+                ],
+              });
+            }
+
+            let dbUser = await User.findOne({ userId });
+            if (dbUser && dbUser.quotaUsed > 0) {
+              dbUser.quotaUsed -= 1;
+              await dbUser.save();
+            }
+
+            const typeText =
+              deleted.type === "income" ? "🟢 รายรับ" : "🔴 รายจ่าย";
+            return client.replyMessage({
+              replyToken: event.replyToken,
+              messages: [
+                {
+                  type: "text",
+                  text: `🗑️ ลบรายการเรียบร้อยแล้ว!\n\n📌 ประเภท: ${typeText}\n📝 รายการ: ${deleted.description}\n💰 จำนวน: ${deleted.amount} บาท`,
+                },
+              ],
+            });
+          }
 
           // ==========================================
           // 0. ตรวจสอบคำทักทาย, คำถามตัวตน, และคำอธิบายความสามารถ
@@ -297,41 +257,41 @@ export const handleLineWebhook = async (
                   quickReply: {
                     items: [
                       {
-                        type: "action",
+                        type: "action" as const,
                         action: {
-                          type: "message",
+                          type: "message" as const,
                           label: "📊 ดูสรุปยอด",
                           text: "สรุป",
                         },
                       },
                       {
-                        type: "action",
+                        type: "action" as const,
                         action: {
-                          type: "message",
+                          type: "message" as const,
                           label: "🟢 ดูรายรับ",
                           text: "รายรับ",
                         },
                       },
                       {
-                        type: "action",
+                        type: "action" as const,
                         action: {
-                          type: "message",
+                          type: "message" as const,
                           label: "🔴 ดูรายจ่าย",
                           text: "รายจ่าย",
                         },
                       },
                       {
-                        type: "action",
+                        type: "action" as const,
                         action: {
-                          type: "message",
+                          type: "message" as const,
                           label: "🗑️ ลบรายการ",
                           text: "ลบ",
                         },
                       },
                       {
-                        type: "action",
+                        type: "action" as const,
                         action: {
-                          type: "message",
+                          type: "message" as const,
                           label: "❓ คุณทำอะไรได้บ้าง",
                           text: "คุณทำอะไรได้",
                         },
@@ -373,7 +333,7 @@ export const handleLineWebhook = async (
               return {
                 type: "action" as const,
                 action: {
-                  type: "message" as const, // กำหนด type ให้ชัดเจนว่าเป็น message action
+                  type: "message" as const,
                   label: `${typeSymbol} ${shortDesc} (${item.amount}฿)`,
                   text: `CONFIRM_DELETE_${item._id}`,
                 },
@@ -387,44 +347,6 @@ export const handleLineWebhook = async (
                   type: "text",
                   text: "🗑️ กรุณาเลือกรายการที่ต้องการลบจากปุ่มด้านล่างครับ 👇",
                   quickReply: { items: quickItems },
-                },
-              ],
-            });
-          }
-
-          // ==========================================
-          // A.2 ยืนยันการลบตาม ID ที่กดมาจาก Quick Reply
-          // ==========================================
-          if (userText.startsWith("CONFIRM_DELETE_")) {
-            const expenseId = userText.replace("CONFIRM_DELETE_", "");
-            const deleted = await Expense.findByIdAndDelete(expenseId);
-
-            if (!deleted) {
-              return client.replyMessage({
-                replyToken: event.replyToken,
-                messages: [
-                  {
-                    type: "text",
-                    text: "⚠️ ไม่พบรายการนี้ หรืออาจถูกลบไปแล้วครับ",
-                  },
-                ],
-              });
-            }
-
-            let dbUser = await User.findOne({ userId });
-            if (dbUser && dbUser.quotaUsed > 0) {
-              dbUser.quotaUsed -= 1;
-              await dbUser.save();
-            }
-
-            const typeText =
-              deleted.type === "income" ? "🟢 รายรับ" : "🔴 รายจ่าย";
-            return client.replyMessage({
-              replyToken: event.replyToken,
-              messages: [
-                {
-                  type: "text",
-                  text: `🗑️ ลบรายการเรียบร้อยแล้ว!\n\n📌 ประเภท: ${typeText}\n📝 รายการ: ${deleted.description}\n💰 จำนวน: ${deleted.amount} บาท`,
                 },
               ],
             });
