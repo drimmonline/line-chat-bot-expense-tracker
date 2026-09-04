@@ -4,9 +4,8 @@ import { lineConfig } from "../config/line.config";
 import { User } from "../models/user.model";
 import { Expense } from "../models/expense.model";
 import { ExpenseService } from "../services/expense.service";
-import axios from "axios"; // สำหรับโหลดไฟล์รูปภาพจาก LINE API
+import axios from "axios";
 
-// เปลี่ยนมาใช้ MessagingApiClient จาก messagingApi
 const client = new messagingApi.MessagingApiClient(lineConfig);
 const expenseService = new ExpenseService();
 
@@ -27,11 +26,7 @@ export const handleLineWebhook = async (
           if (userId) {
             let dbUser = await User.findOne({ userId });
             if (!dbUser) {
-              await User.create({
-                userId,
-                isPremium: false,
-                quotaUsed: 0,
-              });
+              await User.create({ userId, isPremium: false, quotaUsed: 0 });
             }
           }
 
@@ -99,7 +94,7 @@ export const handleLineWebhook = async (
               messages: [
                 {
                   type: "text",
-                  text: "⚠️ คุณใช้โควตาฟรีครบกำหนดแล้ว กรุณาอัปเกรดเป็นแพ็กเกจพรีเมียมเพื่อใช้งานต่อครับ",
+                  text: "⚠️ คุณใช้โควตาฟรีครบกำหนดแล้ว กรุณาอัปเกรดเป็นพรีเมียมครับ",
                 },
               ],
             });
@@ -119,20 +114,19 @@ export const handleLineWebhook = async (
             const imageBase64 = Buffer.from(streamResponse.data).toString(
               "base64",
             );
-
-            // รองรับการอ่านบิลหลายรายการ (เช่น 7-Delivery)
-            const receiptItems = (await (expenseService as any)
-              .parseReceiptImageWithAI)
-              ? await (expenseService as any).parseReceiptImageWithAI(
-                  imageBase64,
-                  "image/jpeg",
-                )
-              : [
-                  await expenseService.parseImageWithAI(
+            const receiptItems =
+              typeof (expenseService as any).parseReceiptImageWithAI ===
+              "function"
+                ? await (expenseService as any).parseReceiptImageWithAI(
                     imageBase64,
                     "image/jpeg",
-                  ),
-                ];
+                  )
+                : [
+                    await expenseService.parseImageWithAI(
+                      imageBase64,
+                      "image/jpeg",
+                    ),
+                  ];
 
             if (!receiptItems || receiptItems.length === 0) {
               return client.replyMessage({
@@ -175,12 +169,7 @@ export const handleLineWebhook = async (
 
             return client.replyMessage({
               replyToken: event.replyToken,
-              messages: [
-                {
-                  type: "text",
-                  text: summaryReply,
-                },
-              ],
+              messages: [{ type: "text", text: summaryReply }],
             });
           } catch (imgErr) {
             console.error("Image processing error:", imgErr);
@@ -203,8 +192,10 @@ export const handleLineWebhook = async (
           const userText = event.message.text.trim();
 
           // ==========================================
-          // A.1 ขั้นตอนที่ 2: บอทถามย้ำว่า "ต้องการลบรายการนี้ใช่ไหม" (ก่อนลบจริง)
+          // ⭐ ย้ายคำสั่งควบคุมพิเศษ (ลบ, ยืนยัน, บันทึกซ้ำ) มาไว้บนสุดตรงนี้เลย
           // ==========================================
+
+          // A.1 ขั้นตอนถามย้ำก่อนลบจริง
           if (userText.startsWith("ASK_DELETE_")) {
             const expenseId = userText.replace("ASK_DELETE_", "");
             const targetExpense = await Expense.findById(expenseId);
@@ -254,9 +245,7 @@ export const handleLineWebhook = async (
             });
           }
 
-          // ==========================================
-          // A.2 ขั้นตอนที่ 3: ดำเนินการลบจริงหลังจากกดยืนยัน
-          // ==========================================
+          // A.2 ดำเนินการลบจริงหลังจากกดยืนยัน
           if (userText.startsWith("CONFIRM_DELETE_")) {
             const expenseId = userText.replace("CONFIRM_DELETE_", "");
             const deleted = await Expense.findByIdAndDelete(expenseId);
@@ -292,9 +281,7 @@ export const handleLineWebhook = async (
             });
           }
 
-          // ==========================================
-          // B.1 ยืนยันบันทึกซ้ำ (กรณีผู้ใช้กดปุ่ม FORCE_SAVE_)
-          // ==========================================
+          // B.1 ยืนยันบันทึกซ้ำ
           if (userText.startsWith("FORCE_SAVE_")) {
             try {
               const payload = JSON.parse(userText.replace("FORCE_SAVE_", ""));
@@ -335,8 +322,18 @@ export const handleLineWebhook = async (
             }
           }
 
+          // ถ้ายกเลิกการทำงาน
+          if (/^ยกเลิก$/i.test(userText)) {
+            return client.replyMessage({
+              replyToken: event.replyToken,
+              messages: [
+                { type: "text", text: "❌ ยกเลิกรายการเรียบร้อยครับ" },
+              ],
+            });
+          }
+
           // ==========================================
-          // 0. ตรวจสอบคำทักทาย, คำถามตัวตน, และคำอธิบายความสามารถ
+          // 0. ตรวจสอบคำทักทาย, คำถามตัวตน
           // ==========================================
           if (
             /^(สวัสดี|หวัดดี|hi|hello|วิธีใช้|ใช้งานยังไง|help|คุณคือใคร|เธอคือใคร|เป็นใคร|คุณทำอะไรได้|เธอทำอะไรได้|สอนใช้หน่อย|ทำอะไรได้บ้าง)/i.test(
@@ -348,7 +345,7 @@ export const handleLineWebhook = async (
               messages: [
                 {
                   type: "text",
-                  text: "🤖 สวัสดีครับ! ผมคือ AI Expense Bot ผู้ช่วยบันทึกรายรับ-รายจ่ายอัจฉริยะส่วนตัวของคุณ\n\nสิ่งที่ผมช่วยคุณได้:\n• บันทึกรายรับ-รายจ่ายด่วน หรือหลายรายการ เช่น 'กระเพรา 50 น้ำ 20'\n• ถ่ายรูปบิลหรือสลิปเพื่อให้ AI ช่วยอ่านยอดเงินให้ทันที\n• พิมพ์ 'สรุป' เพื่อดูยอดเงินและรายการย้อนหลัง\n• พิมพ์ 'ลบ' เพื่อเลือกรายการและกดยืนยันก่อนลบ\n• ระบบแจ้งเตือนอัตโนมัติหากบันทึกรายการซ้ำ\n\nคุณสามารถทดลองพิมพ์ข้อความบันทึกรายการ หรือกดปุ่มเมนูด่วนด้านล่างนี้ได้เลยครับ 👇",
+                  text: "🤖 สวัสดีครับ! ผมคือ AI Expense Bot ผู้ช่วยบันทึกรายรับ-รายจ่ายอัจฉริยะส่วนตัวของคุณ\n\nสิ่งที่ผมช่วยคุณได้:\n• บันทึกรายรับ-รายจ่ายด่วน หรือหลายรายการ เช่น 'กระเพรา 50 น้ำ 20'\n• ถ่ายรูปบิลหรือสลิปเพื่อให้ AI ช่วยอ่านยอดเงินให้ทันที\n• พิมพ์ 'สรุป' เพื่อดูยอดเงินและรายการย้อนหลัง\n• พิมพ์ 'ลบ' เพื่อเลือกรายการที่ต้องการลบพร้อมระบบยืนยัน\n\nคุณสามารถทดลองพิมพ์ข้อความบันทึกรายการ หรือกดปุ่มเมนูด่วนด้านล่างนี้ได้เลยครับ 👇",
                   quickReply: {
                     items: [
                       {
@@ -399,7 +396,7 @@ export const handleLineWebhook = async (
           }
 
           // ==========================================
-          // A. คำสั่ง "ลบ" -> แสดงรายการล่าสุดเป็น Quick Reply ให้กดเลือก (ไปขั้นตอนถามย้ำ)
+          // A. คำสั่ง "ลบ" -> แสดงรายการล่าสุดเป็น Quick Reply ให้เลือก
           // ==========================================
           if (/^(ลบ|ลบรายการ|ลบรายการล่าสุด)$/i.test(userText)) {
             const recentExpenses = await expenseService.getRecentExpenses(
@@ -430,7 +427,7 @@ export const handleLineWebhook = async (
                 action: {
                   type: "message" as const,
                   label: `${typeSymbol} ${shortDesc} (${item.amount}฿)`,
-                  text: `ASK_DELETE_${item._id}`, // เปลี่ยนให้ไปถามยืนยันก่อน
+                  text: `ASK_DELETE_${item._id}`,
                 },
               };
             });
@@ -447,32 +444,23 @@ export const handleLineWebhook = async (
             });
           }
 
-          // ==========================================
-          // B. คำสั่งดูเฉพาะรายรับ (เช่น พิมพ์ "ดูรายรับ" หรือ "รายรับ")
-          // ==========================================
+          // คำสั่งดูรายรับ / รายจ่าย / สรุป / ค้นหา (ปกติ)
           if (/^ดูรายรับ|รายรับ$/i.test(userText)) {
             const incomes = await expenseService.getFilteredExpenses(
               userId,
               { type: "income" },
               5,
             );
-            if (incomes.length === 0) {
+            if (incomes.length === 0)
               return client.replyMessage({
                 replyToken: event.replyToken,
                 messages: [
                   { type: "text", text: "📭 ยังไม่มีประวัติรายการรายรับครับ" },
                 ],
               });
-            }
-
             let text = "🟢 5 รายรับล่าสุดของคุณ:\n------------------------\n";
             incomes.forEach((item, i) => {
-              const itemDate = new Date(item.createdAt || Date.now());
-              const dateStr = itemDate.toLocaleDateString("th-TH", {
-                day: "numeric",
-                month: "short",
-              });
-              text += `${i + 1}. 🟢 (${dateStr}) ${item.description}: +${item.amount} บาท\n`;
+              text += `${i + 1}. 🟢 ${item.description}: +${item.amount} บาท\n`;
             });
             return client.replyMessage({
               replyToken: event.replyToken,
@@ -480,32 +468,22 @@ export const handleLineWebhook = async (
             });
           }
 
-          // ==========================================
-          // C. คำสั่งดูเฉพาะรายจ่าย (เช่น พิมพ์ "ดูรายจ่าย" หรือ "รายจ่าย")
-          // ==========================================
           if (/^ดูรายจ่าย|รายจ่าย$/i.test(userText)) {
             const expenses = await expenseService.getFilteredExpenses(
               userId,
               { type: "expense" },
               5,
             );
-            if (expenses.length === 0) {
+            if (expenses.length === 0)
               return client.replyMessage({
                 replyToken: event.replyToken,
                 messages: [
                   { type: "text", text: "📭 ยังไม่มีประวัติรายการรายจ่ายครับ" },
                 ],
               });
-            }
-
             let text = "🔴 5 รายจ่ายล่าสุดของคุณ:\n------------------------\n";
             expenses.forEach((item, i) => {
-              const itemDate = new Date(item.createdAt || Date.now());
-              const dateStr = itemDate.toLocaleDateString("th-TH", {
-                day: "numeric",
-                month: "short",
-              });
-              text += `${i + 1}. 🔴 (${dateStr}) ${item.description}: -${item.amount} บาท\n`;
+              text += `${i + 1}. 🔴 ${item.description}: -${item.amount} บาท\n`;
             });
             return client.replyMessage({
               replyToken: event.replyToken,
@@ -513,90 +491,36 @@ export const handleLineWebhook = async (
             });
           }
 
-          // ==========================================
-          // 1. ตรวจสอบคำสั่งขอดูรายการสรุป (เช่น "สรุป", "รายการ", "ดูรายการ")
-          // ==========================================
           if (/^(สรุป|รายการ|ดูรายการ|ประวัติ)/i.test(userText)) {
             const recentExpenses = await expenseService.getRecentExpenses(
               userId,
               5,
             );
-
-            if (recentExpenses.length === 0) {
+            if (recentExpenses.length === 0)
               return client.replyMessage({
                 replyToken: event.replyToken,
                 messages: [
-                  {
-                    type: "text",
-                    text: '📭 ยังไม่มีประวัติการบันทึกรายการเลยครับ ลองพิมพ์บันทึกดูก่อนได้เลย เช่น "ข้าว 60" หรือ "ขายของ 300"',
-                  },
+                  { type: "text", text: "📭 ยังไม่มีประวัติการบันทึกรายการ" },
                 ],
               });
-            }
-
-            let totalIncome = 0;
-            let totalExpense = 0;
-
+            let totalIncome = 0,
+              totalExpense = 0;
             recentExpenses.forEach((item) => {
-              if (item.type === "income") {
-                totalIncome += item.amount;
-              } else {
-                totalExpense += item.amount;
-              }
+              item.type === "income"
+                ? (totalIncome += item.amount)
+                : (totalExpense += item.amount);
             });
-
-            const netBalance = totalIncome - totalExpense;
-            const newestDate = new Date(
-              recentExpenses[0].createdAt || Date.now(),
-            );
-            const oldestDate = new Date(
-              recentExpenses[recentExpenses.length - 1].createdAt || Date.now(),
-            );
-
-            const formatDate = (date: Date) => {
-              return date.toLocaleDateString("th-TH", {
-                day: "numeric",
-                month: "short",
-                year: "numeric",
-              });
-            };
-
-            const dateRangeText =
-              recentExpenses.length === 1
-                ? `📅 วันที่: ${formatDate(newestDate)}`
-                : `📅 ช่วงวันที่: ${formatDate(oldestDate)} ถึง ${formatDate(newestDate)}`;
-
-            let replyText = `📊 รายการล่าสุดของคุณ (${recentExpenses.length} รายการ)\n${dateRangeText}\n------------------------\n`;
-
+            let text = `📊 รายการล่าสุด (${recentExpenses.length} รายการ):\n------------------------\n`;
             recentExpenses.forEach((item, index) => {
-              const typeSymbol =
-                item.type === "income" ? "🟢 รายรับ" : "🔴 รายจ่าย";
-              const itemDate = new Date(item.createdAt || Date.now());
-              const timeStr = itemDate.toLocaleTimeString("th-TH", {
-                hour: "2-digit",
-                minute: "2-digit",
-              });
-
-              replyText += `${index + 1}. ${typeSymbol} (${timeStr})\n`;
-              replyText += `   📌 ${item.description}: ${item.amount} บาท\n`;
-              replyText += `   📂 หมวดหมู่: ${item.category}\n`;
-              replyText += `------------------------\n`;
+              text += `${index + 1}. ${item.type === "income" ? "🟢" : "🔴"} ${item.description}: ${item.amount} บาท\n`;
             });
-
-            replyText += `📈 สรุปยอดรวม:\n`;
-            replyText += `🟢 รวมรายรับ: ${totalIncome.toLocaleString()} บาท\n`;
-            replyText += `🔴 รวมรายจ่าย: ${totalExpense.toLocaleString()} บาท\n`;
-            replyText += `💰 สุทธิ: ${netBalance >= 0 ? "+" : ""}${netBalance.toLocaleString()} บาท`;
-
+            text += `------------------------\n🟢 รับ: ${totalIncome} | 🔴 จ่าย: ${totalExpense}`;
             return client.replyMessage({
               replyToken: event.replyToken,
-              messages: [{ type: "text", text: replyText }],
+              messages: [{ type: "text", text }],
             });
           }
 
-          // ==========================================
-          // 2. ตรวจสอบคำสั่งค้นหารายการเฉพาะเจาะจง (เช่น "หา กระเพรา")
-          // ==========================================
           const searchMatch = userText.match(/^(หา|ค้นหา)\s+(.+)$/i);
           if (searchMatch) {
             const keyword = searchMatch[2].trim();
@@ -605,8 +529,7 @@ export const handleLineWebhook = async (
               keyword,
               5,
             );
-
-            if (foundExpenses.length === 0) {
+            if (foundExpenses.length === 0)
               return client.replyMessage({
                 replyToken: event.replyToken,
                 messages: [
@@ -616,28 +539,10 @@ export const handleLineWebhook = async (
                   },
                 ],
               });
-            }
-
-            let searchReply = `🔍 ผลการค้นหา "${keyword}" (${foundExpenses.length} รายการ):\n------------------------\n`;
+            let searchReply = `🔍 ผลการค้นหา "${keyword}":\n------------------------\n`;
             foundExpenses.forEach((item, index) => {
-              const typeSymbol =
-                item.type === "income" ? "🟢 รายรับ" : "🔴 รายจ่าย";
-              const itemDate = new Date(item.createdAt || Date.now());
-              const dateStr = itemDate.toLocaleDateString("th-TH", {
-                day: "numeric",
-                month: "short",
-              });
-              const timeStr = itemDate.toLocaleTimeString("th-TH", {
-                hour: "2-digit",
-                minute: "2-digit",
-              });
-
-              searchReply += `${index + 1}. ${typeSymbol} (${dateStr} ${timeStr})\n`;
-              searchReply += `   📌 ${item.description}: ${item.amount} บาท\n`;
-              searchReply += `   📂 หมวดหมู่: ${item.category}\n`;
-              searchReply += `------------------------\n`;
+              searchReply += `${index + 1}. ${item.type === "income" ? "🟢" : "🔴"} ${item.description}: ${item.amount} บาท\n`;
             });
-
             return client.replyMessage({
               replyToken: event.replyToken,
               messages: [{ type: "text", text: searchReply }],
@@ -661,16 +566,15 @@ export const handleLineWebhook = async (
           }
 
           // ==========================================
-          // 4. กระบวนการปกติ: ตรวจสอบโควตาและบันทึกข้อมูล (รองรับหลายรายการ)
+          // 4. บันทึกข้อมูล (รองรับหลายรายการ + เช็คซ้ำ)
           // ==========================================
           let dbUser = await User.findOne({ userId });
-          if (!dbUser) {
+          if (!dbUser)
             dbUser = await User.create({
               userId,
               isPremium: false,
               quotaUsed: 0,
             });
-          }
 
           const FREE_LIMIT = 30;
           if (!dbUser.isPremium && dbUser.quotaUsed >= FREE_LIMIT) {
@@ -679,13 +583,13 @@ export const handleLineWebhook = async (
               messages: [
                 {
                   type: "text",
-                  text: "⚠️ คุณใช้โควตาฟรีครบกำหนดแล้ว กรุณาอัปเกรดเป็นแพ็กเกจพรีเมียมเพื่อใช้งานต่อครับ",
+                  text: "⚠️ คุณใช้โควตาฟรีครบกำหนดแล้ว กรุณาอัปเกรดพรีเมียมครับ",
                 },
               ],
             });
           }
 
-          // ลองตรวจสอบแบบหลายรายการก่อน (เช่น "กระเพรา 50 น้ำ 20")
+          // หลายรายการ
           let multipleItems: any[] = [];
           try {
             if (
@@ -703,42 +607,23 @@ export const handleLineWebhook = async (
             let successCount = 0;
             let summaryReply =
               "✅ บันทึกหลายรายการสำเร็จ:\n------------------------\n";
-
             for (const item of multipleItems) {
               if (item.amount && item.amount > 0) {
-                // เช็คซ้ำสำหรับระบบหลายรายการ
-                const isDuplicate =
-                  typeof (expenseService as any).checkDuplicateExpense ===
-                  "function"
-                    ? await (expenseService as any).checkDuplicateExpense(
-                        userId,
-                        item.description,
-                        item.amount,
-                      )
-                    : null;
-
-                if (!isDuplicate) {
-                  await Expense.create({
-                    userId,
-                    topic: "บันทึกหลายรายการ",
-                    description: item.description,
-                    amount: item.amount,
-                    category: item.category,
-                    type: item.type,
-                  });
-                  successCount++;
-                  const typeSymbol = item.type === "income" ? "🟢" : "🔴";
-                  summaryReply += `${typeSymbol} ${item.description}: ${item.amount} บาท\n`;
-                } else {
-                  summaryReply += `⚠️ ข้าม (ซ้ำ): ${item.description} (${item.amount}฿)\n`;
-                }
+                await Expense.create({
+                  userId,
+                  topic: "บันทึกหลายรายการ",
+                  description: item.description,
+                  amount: item.amount,
+                  category: item.category,
+                  type: item.type,
+                });
+                successCount++;
+                summaryReply += `${item.type === "income" ? "🟢" : "🔴"} ${item.description}: ${item.amount} บาท\n`;
               }
             }
-
             if (successCount > 0) {
               dbUser.quotaUsed += successCount;
               await dbUser.save();
-              summaryReply += `------------------------\n(ใช้งานไปแล้ว ${dbUser.quotaUsed}/${dbUser.isPremium ? "∞" : FREE_LIMIT} รายการ)`;
               return client.replyMessage({
                 replyToken: event.replyToken,
                 messages: [{ type: "text", text: summaryReply }],
@@ -746,13 +631,12 @@ export const handleLineWebhook = async (
             }
           }
 
-          // Fallback ถ้าไม่ใช่หลายรายการ ให้ประมวลผลแบบรายการเดียวปกติ
+          // รายการเดี่ยว
           let expenseData = expenseService.parseQuickText(userText);
           if (!expenseData) {
             expenseData = await expenseService.parseWithAI(userText);
           }
 
-          // ป้องกันกรณี AI ตีความแล้วไม่มีจำนวนเงิน
           if (!expenseData || !expenseData.amount || expenseData.amount === 0) {
             return client.replyMessage({
               replyToken: event.replyToken,
@@ -765,7 +649,7 @@ export const handleLineWebhook = async (
             });
           }
 
-          // 🔍 ตรวจสอบรายการซ้ำสำหรับรายการเดี่ยว
+          // เช็คซ้ำ
           const duplicate =
             typeof (expenseService as any).checkDuplicateExpense === "function"
               ? await (expenseService as any).checkDuplicateExpense(
@@ -781,7 +665,7 @@ export const handleLineWebhook = async (
               messages: [
                 {
                   type: "text",
-                  text: `⚠️ พบรายการ "${expenseData.description}" จำนวน ${expenseData.amount} บาท ถูกบันทึกไปแล้วในวันนี้ คุณต้องการบันทึกซ้ำอีกครั้งหรือไม่?`,
+                  text: `⚠️ พบรายการ "${expenseData.description}" จำนวน ${expenseData.amount} บาท ถูกบันทึกไปแล้วในวันนี้ ต้องการบันทึกซ้ำหรือไม่?`,
                   quickReply: {
                     items: [
                       {
@@ -824,15 +708,12 @@ export const handleLineWebhook = async (
           dbUser.quotaUsed += 1;
           await dbUser.save();
 
-          const typeText =
-            expenseData.type === "income" ? "🟢 รายรับ" : "🔴 รายจ่าย";
-
           return client.replyMessage({
             replyToken: event.replyToken,
             messages: [
               {
                 type: "text",
-                text: `✅ บันทึกสำเร็จ!\n\n📌 ประเภท: ${typeText}\n📝 รายการ: ${expenseData.description}\n💰 จำนวน: ${expenseData.amount} บาท\n📂 หมวดหมู่: ${expenseData.category}\n\n(ใช้งานไปแล้ว ${dbUser.quotaUsed}/${dbUser.isPremium ? "∞" : FREE_LIMIT} รายการ)`,
+                text: `✅ บันทึกสำเร็จ!\n\n📌 ประเภท: ${expenseData.type === "income" ? "🟢 รายรับ" : "🔴 รายจ่าย"}\n📝 รายการ: ${expenseData.description}\n💰 จำนวน: ${expenseData.amount} บาท`,
               },
             ],
           });
