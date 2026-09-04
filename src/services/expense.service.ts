@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
-import { Expense } from "../models/expense.model"; // นำเข้า Model สำหรับดึงข้อมูลประวัติ
+import { Expense } from "../models/expense.model";
 
 export interface ExpenseData {
   description: string;
@@ -12,16 +12,13 @@ export class ExpenseService {
   private ai: GoogleGenAI;
 
   constructor() {
-    // กำหนดค่าเริ่มต้น Google Gen AI โดยดึง API Key จาก .env
     this.ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
   }
 
   /**
-   * 1. ตรวจสอบข้อความแบบง่ายด้วย RegEx (รองรับคำศัพท์รายรับ/รายจ่ายที่หลากหลายขึ้น)
-   * ช่วยประหยัดเวลาและไม่ต้องเสีย Token โดยไม่จำเป็น
+   * 1. ตรวจสอบข้อความแบบง่ายด้วย RegEx (ขยายคีย์เวิร์ดทั้งรายรับและรายจ่ายให้กว้างขึ้น)
    */
   public parseQuickText(text: string): ExpenseData | null {
-    // ตรวจสอบว่าในข้อความมีตัวเลข (จำนวนเงิน) หรือไม่ ถ้าไม่มีให้ตีเป็นข้อความทั่วไปแล้วข้ามทันที
     const hasNumber = /\d+/.test(text);
     if (!hasNumber) {
       return null;
@@ -34,15 +31,16 @@ export class ExpenseService {
       const description = match[1].trim();
       const amount = parseFloat(match[2]);
 
+      // 🟢 ขยายคีย์เวิร์ดฝั่งรายรับให้ครอบคลุมงานจ้าง ฟรีแลนซ์ บริการ และกำไร
       const isIncome =
-        /^(รับ|เงินเดือน|ขาย|กำไร|รายรับ|เงินเข้า|โอนเข้า|ค่าจ้าง|เงินปันผล|OT|ค่าคอม)/i.test(
+        /^(รับ|เงินเดือน|ขาย|กำไร|รายรับ|เงินเข้า|โอนเข้า|ค่าจ้าง|เงินปันผล|OT|ค่าคอม|ปั๊ม|ค่าปั่น|ค่าบริการ|ได้มา|ฟรีแลนซ์|ค่าสอน|ค่าตอบแทน)/i.test(
           description,
         );
 
       return {
         description,
         amount,
-        category: isIncome ? "รายรับ" : "ทั่วไป",
+        category: isIncome ? "รายรับทั่วไป" : "ทั่วไป",
         type: isIncome ? "income" : "expense",
       };
     }
@@ -51,19 +49,17 @@ export class ExpenseService {
   }
 
   /**
-   * 2. ใช้ Google Gemini AI วิเคราะห์กรณีข้อความยาวหรือซับซ้อน
-   * (เช่น "เมื่อวานไปกินชาบูกับเพื่อน หารกัน 450 บาท" หรือ "เงินเดือนออก 25000")
+   * 2. ใช้ Google Gemini AI วิเคราะห์กรณีข้อความยาวหรือซับซ้อน (รองรับบริบทกว้าง)
    */
   public async parseWithAI(text: string): Promise<ExpenseData> {
     try {
-      // กำหนดโครงสร้าง Response ที่ต้องการบังคับให้ AI ตอบกลับมาเป็น JSON ชัดเจน (Structured Outputs)
       const responseSchema: Schema = {
         type: Type.OBJECT,
         properties: {
           description: {
             type: Type.STRING,
             description:
-              "รายละเอียดรายการใช้จ่ายหรือรายรับ เช่น ข้าวเที่ยง, ค่าเดินทาง, เงินเดือน, เติมเกม",
+              "รายละเอียดรายการ เช่น ค่าข้าว, รับปั๊มแร๊งค์, เติมเกม, ค่าจ้างเขียนโค้ด",
           },
           amount: {
             type: Type.NUMBER,
@@ -72,7 +68,7 @@ export class ExpenseService {
           category: {
             type: Type.STRING,
             description:
-              "หมวดหมู่ค่าใช้จ่ายหรือรายรับ เช่น อาหาร, เดินทาง, บันเทิง, ช้อปปิ้ง, เกม, รายรับ",
+              "หมวดหมู่ที่เหมาะสม เช่น อาหาร, เกม/บริการออนไลน์, เดินทาง, ธุรกิจ/ฟรีแลนซ์, ช้อปปิ้ง, บันเทิง, เงินเดือน",
           },
           type: {
             type: Type.STRING,
@@ -83,7 +79,6 @@ export class ExpenseService {
         required: ["description", "amount", "category", "type"],
       };
 
-      // เรียกใช้งานโมเดล gemini-2.5-flash ที่รองรับในปัจจุบัน
       const response = await this.ai.models.generateContent({
         model: "gemini-2.5-flash",
         contents: `วิเคราะห์ข้อความบันทึกบัญชีนี้ แล้วสกัดข้อมูลออกมาตามโครงสร้าง: "${text}"`,
@@ -91,7 +86,13 @@ export class ExpenseService {
           responseMimeType: "application/json",
           responseSchema: responseSchema,
           systemInstruction:
-            "คุณคือผู้ช่วยอัจฉริยะด้านการบันทึกบัญชี หน้าที่ของคุณคือสกัดจำนวนเงิน รายการ หมวดหมู่ และระบุประเภทให้ถูกต้องว่าเป็ย income (รายรับ) หรือ expense (รายจ่าย)",
+            "คุณคือผู้ช่วยอัจฉริยะด้านการบัญชีและการเงินส่วนบุคคล หน้าที่ของคุณคือสกัดข้อมูลจากข้อความภาษาไทยทุกรูปแบบได้อย่างแม่นยำ:\n" +
+            "1. วิเคราะห์ type ให้ถูกต้อง:\n" +
+            "   - income (รายรับ): เช่น เงินเดือน, ค่าจ้าง, รับทำของ, รับปั๊มแรงค์, ค่าคอมมิชชั่น, ขายของ, กำไร, เงินปันผล, มีคนโอนให้, ได้รับเงิน, ค่าบริการ\n" +
+            "   - expense (รายจ่าย): เช่น ค่าอาหาร, ซื้อของ, เติมเกม, จ่ายค่าเน็ต, ทำบุญ, ค่าเดินทาง, เปย์, ทำสวย, ช้อปปิ้ง, ค่าใช้จ่ายจิปาถะ\n" +
+            "2. สกัด description ให้เข้าใจง่าย\n" +
+            "3. สกัด amount เป็นตัวเลขเสมอ\n" +
+            "4. กำหนด category ให้สอดคล้องกับยุคปัจจุบันและบริบทของผู้ใช้",
         },
       });
 
@@ -103,7 +104,6 @@ export class ExpenseService {
       throw new Error("AI could not parse the expense text.");
     } catch (error) {
       console.error("Gemini AI Parse Error:", error);
-      // ค่าสำรองกรณี AI ขัดข้อง
       return {
         description: text,
         amount: 0,
@@ -113,9 +113,6 @@ export class ExpenseService {
     }
   }
 
-  /**
-   * 3. ดึงรายการประวัติการใช้จ่ายล่าสุดของผู้ใช้จาก MongoDB
-   */
   public async getRecentExpenses(
     userId: string,
     limit: number = 5,
@@ -131,9 +128,6 @@ export class ExpenseService {
     }
   }
 
-  /**
-   * 4. ค้นหารายการตามคำค้น (เช่น ค้นหาคำว่า "กระเพรา" หรือ "ค่าเดินทาง")
-   */
   public async searchExpenses(
     userId: string,
     keyword: string,
@@ -156,9 +150,6 @@ export class ExpenseService {
     }
   }
 
-  /**
-   * 5. ดึงรายการตามประเภท (รายรับ/รายจ่าย) สำหรับกรองดูเฉพาะกลุ่ม
-   */
   public async getFilteredExpenses(
     userId: string,
     filter: { type: "income" | "expense" },
@@ -175,9 +166,6 @@ export class ExpenseService {
     }
   }
 
-  /**
-   * 6. ลบรายการล่าสุดของผู้ใช้
-   */
   public async deleteLatestExpense(userId: string): Promise<any | null> {
     try {
       const latest = await Expense.findOne({ userId }).sort({ createdAt: -1 });
@@ -191,7 +179,7 @@ export class ExpenseService {
       return null;
     }
   }
-  // (สมมติว่าคุณมีฟังก์ชันแปลง Buffer ของรูปภาพให้เป็นรูปแบบที่ Gemini รองรับ หรือส่งเป็น base64)
+
   public async parseImageWithAI(
     imageBase64: string,
     mimeType: string,
@@ -202,7 +190,7 @@ export class ExpenseService {
         properties: {
           description: {
             type: Type.STRING,
-            description: "ชื่อร้านค้า หรือรายละเอียดรายการจากบิล/ใบเสร็จ",
+            description: "ชื่อร้านค้า หรือรายละเอียดรายการจากบิล/สลิป",
           },
           amount: {
             type: Type.NUMBER,
@@ -210,7 +198,7 @@ export class ExpenseService {
           },
           category: {
             type: Type.STRING,
-            description: "หมวดหมู่ เช่น อาหาร, เดินทาง, ช้อปปิ้ง, ค่าน้ำไฟ",
+            description: "หมวดหมู่ เช่น อาหาร, เดินทาง, ช้อปปิ้ง, บิลโอนเงิน",
           },
           type: {
             type: Type.STRING,
@@ -227,18 +215,18 @@ export class ExpenseService {
           {
             inlineData: {
               data: imageBase64,
-              mimeType: mimeType, // เช่น "image/jpeg" หรือ "image/png"
+              mimeType: mimeType,
             },
           },
           {
-            text: "ช่วยอ่านบิลหรือใบเสร็จนี้ แล้วสกัดข้อมูลยอดเงิน รายการ และหมวดหมู่ ออกมาตามโครงสร้างที่กำหนด",
+            text: "ช่วยอ่านบิลหรือสลิปนี้ ตรวจสอบว่าเป็นสลิปโอนเงินเข้า (income) หรือสลิปจ่ายเงิน (expense) แล้วสกัดข้อมูลยอดเงิน รายการ และหมวดหมู่ ออกมา",
           },
         ],
         config: {
           responseMimeType: "application/json",
           responseSchema: responseSchema,
           systemInstruction:
-            "คุณคือผู้ช่วยอัจฉริยะด้านการอ่านบิลและใบเสร็จ หน้าที่ของคุณคือดึงข้อมูลตัวเลขและรายการค่าใช้จ่ายจากรูปภาพที่ได้รับอย่างแม่นยำ",
+            "คุณคือผู้ช่วยอัจฉริยะด้านการอ่านบิลและสลิปการโอนเงิน หน้าที่คือแยกแยะสลิปเงินเข้า (income) และสลิปจ่ายออก (expense) พร้อมดึงยอดเงินและรายละเอียดให้ถูกต้อง",
         },
       });
 
@@ -250,14 +238,14 @@ export class ExpenseService {
     } catch (error) {
       console.error("Gemini Vision Parse Error:", error);
       return {
-        description: "ค่าใช้จ่ายจากรูปภาพ",
+        description: "รายการจากรูปภาพ",
         amount: 0,
         category: "อื่นๆ",
         type: "expense",
       };
     }
   }
-  // เพิ่มโมเดลการ parse หลายรายการพร้อมกัน
+
   public async parseMultipleWithAI(text: string): Promise<ExpenseData[]> {
     try {
       const responseSchema: Schema = {
@@ -276,12 +264,12 @@ export class ExpenseService {
 
       const response = await this.ai.models.generateContent({
         model: "gemini-2.5-flash",
-        contents: `วิเคราะห์ข้อความบันทึกบัญชีหลายรายการนี้ แล้วสกัดออกมาเป็นรายการแยกกัน: "${text}"`,
+        contents: `วิเคราะห์ข้อความบันทึกบัญชีหลายรายการนี้ (อาจมีทั้งรายรับและรายจ่ายปะปนกัน) แล้วสกัดออกมาเป็นอาเรย์แยกรายการ: "${text}"`,
         config: {
           responseMimeType: "application/json",
           responseSchema: responseSchema,
           systemInstruction:
-            "คุณคือผู้ช่วยอัจฉริยะด้านการบันทึกบัญชี หน้าที่คือสกัดข้อความที่มีหลายรายการ (เช่น กระเพรา 50 น้ำ 20) ออกมาเป็นอาเรย์ของข้อมูลรายรับ-รายจ่ายแต่ละรายการอย่างแม่นยำ",
+            "คุณคือผู้ช่วยอัจฉริยะด้านการบัญชี หน้าที่คือแยกแยะประโยคที่มีหลายรายการ (เช่น รับสอนพิเศษ 500 กินชาบู 350) ให้ถูกต้องว่าอันไหนเป็น income หรือ expense แล้วแตกออกเป็นอาเรย์ของข้อมูลแต่ละรายการ",
         },
       });
 
@@ -294,7 +282,7 @@ export class ExpenseService {
       return [];
     }
   }
-  // ตรวจสอบรายการซ้ำในวันเดียวกัน
+
   public async checkDuplicateExpense(
     userId: string,
     description: string,
@@ -308,14 +296,14 @@ export class ExpenseService {
 
     const existing = await Expense.findOne({
       userId,
-      description: { $regex: new RegExp(`^${description}$`, "i") }, // เช็คชื่อตรงกัน (ไม่สนตัวพิมพ์เล็กใหญ่)
+      description: { $regex: new RegExp(`^${description}$`, "i") },
       amount,
       createdAt: { $gte: startOfDay, $lte: endOfDay },
     });
 
     return existing;
   }
-  // เพิ่มฟังก์ชันสำหรับอ่านบิล/สลิปที่มีหลายรายการ
+
   public async parseReceiptImageWithAI(
     imageBase64: string,
     mimeType: string,
@@ -332,7 +320,7 @@ export class ExpenseService {
             },
             amount: {
               type: Type.NUMBER,
-              description: "จำนวนเงินของรายการนั้นๆ เป็นตัวเลข",
+              description: "จำนวนเงินเป็นตัวเลข",
             },
             category: {
               type: Type.STRING,
@@ -340,8 +328,7 @@ export class ExpenseService {
             },
             type: {
               type: Type.STRING,
-              description:
-                "ประเภทรายการ ระหว่าง income (รายรับ) หรือ expense (รายจ่าย)",
+              description: "income หรือ expense",
             },
           },
           required: ["description", "amount", "category", "type"],
@@ -358,14 +345,14 @@ export class ExpenseService {
             },
           },
           {
-            text: "ช่วยอ่านใบเสร็จนี้ แล้วสกัดรายการสินค้าที่มีราคามากกว่า 0 บาท ออกมาทั้งหมดเป็นอาเรย์ (Array) แยกแต่ละรายการให้ถูกต้อง",
+            text: "ช่วยอ่านใบเสร็จนี้ แล้วสกัดรายการสินค้าที่มีราคามากกว่า 0 บาท ออกมาทั้งหมดเป็นอาเรย์ (ส่วนใหญ่เป็นรายจ่าย expense)",
           },
         ],
         config: {
           responseMimeType: "application/json",
           responseSchema: responseSchema,
           systemInstruction:
-            "คุณคือผู้ช่วยอัจฉริยะด้านการอ่านใบเสร็จ 7-Eleven และบิลซื้อของ หน้าที่ของคุณคือดึงรายการสินค้าและราคาที่ต้องจ่ายจริง (กรองรายการที่เป็น 0 บาททิ้งไป) แยกออกมาเป็นรายการเดี่ยวๆ ให้ครบถ้วน",
+            "คุณคือผู้ช่วยอัจฉริยะด้านการอ่านใบเสร็จ หน้าที่คือดึงรายการสินค้าและราคาจากรูปภาพ กรองรายการที่เป็น 0 บาททิ้ง และระบุ type เป็น expense เป็นหลัก",
         },
       });
 
